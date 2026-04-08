@@ -51,12 +51,13 @@ function BuilderView({ onAgentReady }) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [builderInfo, setBuilderInfo] = useState(null)
 
   useEffect(() => {
+    // Fetch available models for the builder dropdown
     fetch('/api/models')
       .then(r => r.json())
       .then(data => {
-        // Filter out embedding models
         const chat = (data.models || []).filter(
           m => !m.includes('embed') && !m.includes('bert')
         )
@@ -64,6 +65,12 @@ function BuilderView({ onAgentReady }) {
         setSelectedModel(data.default || chat[0] || '')
       })
       .catch(() => setError('Could not reach API. Make sure the backend is running.'))
+
+    // Fetch builder identity (who is the meta-agent?)
+    fetch('/api/models/discover')
+      .then(r => r.json())
+      .then(data => setBuilderInfo(data.builder))
+      .catch(() => {})
   }, [])
 
   async function handleBuild() {
@@ -107,6 +114,15 @@ function BuilderView({ onAgentReady }) {
           <h2>Job Description</h2>
           <p className="panel-sub">Describe what the agent should do</p>
         </div>
+
+        {builderInfo && (
+          <div className="builder-identity">
+            <span className="builder-label">Meta-Agent Builder</span>
+            <code className="builder-model">{builderInfo.model_id}</code>
+            <span className="badge badge-green">Local Ollama</span>
+            <span className="builder-tier">Tier {builderInfo.tier}/5</span>
+          </div>
+        )}
 
         <textarea
           className="jd-textarea"
@@ -170,6 +186,39 @@ function BuilderView({ onAgentReady }) {
 
         {result && (
           <div className="results">
+            {/* Model recommendation card */}
+            {result.recommended_model && (
+              <div className="result-card result-model-rec">
+                <h4>Recommended Model for this Agent</h4>
+                <div className="model-rec-header">
+                  <code className="model-rec-id">{result.recommended_model.model_id}</code>
+                  <span className={`badge badge-${result.recommended_model.is_local ? 'green' : 'blue'}`}>
+                    {result.recommended_model.provider_label}
+                  </span>
+                  <span className="tier-pill">
+                    Tier {result.recommended_model.tier}/5
+                    {result.recommended_model.required_tier && result.recommended_model.tier !== result.recommended_model.required_tier
+                      ? ` → need ${result.recommended_model.required_tier}` : ''}
+                  </span>
+                </div>
+                <p className="model-rec-reason">{result.recommended_model.reason}</p>
+                {result.recommended_model.warning && (
+                  <p className="model-rec-warning">⚠️ {result.recommended_model.warning}</p>
+                )}
+                {result.recommended_model.alternatives?.length > 0 && (
+                  <div className="model-alts">
+                    <span className="alts-label">Alternatives:</span>
+                    {result.recommended_model.alternatives.map((alt, i) => (
+                      <span key={i} className="alt-chip" title={alt.reason}>
+                        {alt.model_id}
+                        <small> ({alt.provider_label || alt.provider})</small>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Hero card */}
             <div className="result-card result-hero">
               <div className="hero-type">

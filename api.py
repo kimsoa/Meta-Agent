@@ -2,14 +2,15 @@
 Meta-Agent Builder — FastAPI Web Application
 
 Endpoints:
-  GET  /                      → SPA or welcome page
-  GET  /api/health            → health check
-  GET  /api/agent-types       → list all available agent types
-  GET  /api/models            → list available Ollama models
-  POST /api/build             → NLP-first build: analyse (Ollama) → scaffold agent
-  POST /api/chat              → chat with a generated agent via Ollama (streaming SSE)
-  GET  /api/tools             → list all tools grouped by ecosystem
-  GET  /api/agents            → list all scaffolded agents
+  GET  /                        → SPA or welcome page
+  GET  /api/health              → health check + builder identity
+  GET  /api/agent-types         → list all available agent types
+  GET  /api/models              → list available Ollama models (simple)
+  GET  /api/models/discover     → full model catalog: local + external providers
+  POST /api/build               → NLP-first build + intelligent model recommendation
+  POST /api/chat                → chat with a generated agent via Ollama (streaming SSE)
+  GET  /api/tools               → list all tools grouped by ecosystem
+  GET  /api/agents              → list all scaffolded agents
 """
 
 import os
@@ -27,6 +28,7 @@ from pydantic import BaseModel, Field
 from main import MetaAgentBuilder
 from tool_registry import get_ecosystem_groups
 from agent_scaffold import scaffold_agent, list_scaffolded_agents
+from model_selector import discover_models, recommend_model
 
 # ---------------------------------------------------------------------------
 # Config
@@ -104,6 +106,9 @@ class BuildResponse(BaseModel):
     system_prompt: str
     analysis_source: str
     scaffold_path: Optional[str] = None
+    # Intelligent model assignment
+    recommended_model: Optional[Dict[str, Any]] = None
+    builder_model: Optional[Dict[str, Any]] = None
 
 
 class Message(BaseModel):
@@ -159,8 +164,16 @@ async def _stream_ollama(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health", tags=["Meta"])
-def health():
-    return {"status": "ok", "ollama_url": OLLAMA_URL, "default_model": DEFAULT_MODEL}
+async def health():
+    """Health check — includes builder identity and Ollama status."""
+    catalog = await discover_models(ollama_url=OLLAMA_URL, builder_model=DEFAULT_MODEL)
+    return {
+        "status": "ok",
+        "ollama_url": OLLAMA_URL,
+        "builder": catalog["builder"],
+        "local_models_count": len(catalog["local"]),
+        "configured_providers": catalog["configured_providers"],
+    }
 
 
 @app.get("/api/agent-types", response_model=Dict[str, Any], tags=["Reference"])
@@ -170,16 +183,29 @@ def get_agent_types():
 
 @app.get("/api/models", tags=["Reference"])
 async def get_models():
-    """Return available Ollama models."""
+    """Return available Ollama chat models (simple list for the builder dropdown)."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{OLLAMA_URL}/api/tags")
             resp.raise_for_status()
             data = resp.json()
-            models = [m["name"] for m in data.get("models", [])]
+            models = [
+                m["name"] for m in data.get("models", [])
+                if not any(k in m["name"].lower() for k in ("embed", "bert", "e5-", "bge-"))
+            ]
             return {"models": models, "default": DEFAULT_MODEL}
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Ollama unreachable: {exc}")
+
+
+@app.get("/api/models/discover", tags=["Reference"])
+async def get_models_discover():
+    """
+    Full model catalog: discovers all local Ollama models, all external
+    providers configured via ENV vars, and the meta-agent builder identity.
+    """
+    catalog = await discover_models(ollama_url=OLLAMA_URL, builder_model=DEFAULT_MODEL)
+    return catalog
 
 
 @app.post("/api/build", response_model=BuildResponse, tags=["Pipeline"])
@@ -208,6 +234,11 @@ async def build_agent(request: BuildRequest):
             )
             scaffold_path = result.get("path")
 
+        # ── Intelligent model recommendation for the created agent ─────────────
+        catalog = await discover_models(ollama_url=OLLAMA_URL, builder_model=request.model)
+        model_rec = recommend_model(spec, catalog)
+        builder_info = catalog["builder"]
+
         return BuildResponse(
             agent_name=spec.get("agent_name", "Agent"),
             agent_type=spec["agent_type"],
@@ -224,6 +255,8 @@ async def build_agent(request: BuildRequest):
             system_prompt=spec["system_prompt"],
             analysis_source=spec.get("analysis_source", "llm"),
             scaffold_path=scaffold_path,
+            recommended_model=model_rec,
+            builder_model=builder_info,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

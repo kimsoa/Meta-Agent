@@ -1,0 +1,18 @@
+{
+  "agent_id": "data_analysis_agent",
+  "agent_type": "conversational",
+  "domain": "data_analysis",
+  "created_at": "2026-04-08T01:37:53.199273+00:00",
+  "tools": [
+    "database_query",
+    "file_operations",
+    "web_search",
+    "http_request"
+  ],
+  "analysis_summary": {
+    "complexity_level": 1,
+    "interaction_type": "conversational",
+    "problem_type": "ignorable",
+    "autonomy_level": "medium"
+  }
+}
