@@ -231,6 +231,306 @@ PREDEFINED_TOOLS: Dict[str, Dict[str, Any]] = {
                 return record
         """),
     },
+
+    # ── Weather & Environment ───────────────────────────────────────────────
+    "weather": {
+        "name": "Weather",
+        "description": "Get current weather and forecasts for any city using Open-Meteo (no API key needed)",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "information",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def get_weather(city: str, country_code: str = '') -> dict:
+                \"\"\"Return current temperature, wind speed and weather code for a city.\"\"\"
+                import httpx
+                # Step 1: geocode
+                geo_url = 'https://geocoding-api.open-meteo.com/v1/search'
+                q = f'{city},{country_code}' if country_code else city
+                geo = httpx.get(geo_url, params={'name': q, 'count': 1}, timeout=10).json()
+                if not geo.get('results'):
+                    return {'error': f'City not found: {city}'}
+                loc = geo['results'][0]
+                # Step 2: fetch weather
+                wx_url = 'https://api.open-meteo.com/v1/forecast'
+                params = {
+                    'latitude': loc['latitude'], 'longitude': loc['longitude'],
+                    'current': 'temperature_2m,wind_speed_10m,weather_code',
+                    'timezone': 'auto'
+                }
+                wx = httpx.get(wx_url, params=params, timeout=10).json()
+                current = wx.get('current', {})
+                return {
+                    'city': loc['name'], 'country': loc.get('country', ''),
+                    'temperature_c': current.get('temperature_2m'),
+                    'wind_speed_kmh': current.get('wind_speed_10m'),
+                    'weather_code': current.get('weather_code'),
+                    'timezone': wx.get('timezone')
+                }
+        """),
+    },
+
+    # ── News ────────────────────────────────────────────────────────────────
+    "news_search": {
+        "name": "News Search",
+        "description": "Fetch latest news headlines on any topic via GNews API or DuckDuckGo News",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "information",
+        "dependencies": ["duckduckgo-search"],
+        "code": textwrap.dedent("""\
+            def get_news(topic: str, max_results: int = 5) -> list:
+                \"\"\"Return recent news headlines and snippets for a topic.\"\"\"
+                from duckduckgo_search import DDGS
+                with DDGS() as ddgs:
+                    results = list(ddgs.news(topic, max_results=max_results))
+                return [{'title': r.get('title'), 'body': r.get('body'),
+                         'url': r.get('url'), 'date': r.get('date')} for r in results]
+        """),
+    },
+
+    # ── Calculator & Math ───────────────────────────────────────────────────
+    "calculator": {
+        "name": "Calculator",
+        "description": "Evaluate mathematical expressions — arithmetic, algebra, statistics, finance (compound interest, loan EMI)",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "utilities",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def calculate(expression: str) -> dict:
+                \"\"\"Safely evaluate a math expression and return the result.\"\"\"
+                import ast, math, statistics
+                allowed_names = {k: v for k, v in vars(math).items() if not k.startswith('_')}
+                allowed_names.update({'abs': abs, 'round': round, 'min': min, 'max': max,
+                                      'sum': sum, 'len': len, 'pow': pow})
+                try:
+                    tree = ast.parse(expression, mode='eval')
+                    # Whitelist only safe AST nodes
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Call):
+                            if not (isinstance(node.func, ast.Name) and node.func.id in allowed_names):
+                                raise ValueError(f'Disallowed call: {ast.dump(node.func)}')
+                    result = eval(compile(tree, '<expr>', 'eval'), {'__builtins__': {}}, allowed_names)
+                    return {'expression': expression, 'result': result}
+                except Exception as e:
+                    return {'error': str(e)}
+
+            def loan_emi(principal: float, annual_rate_pct: float, months: int) -> dict:
+                \"\"\"Calculate monthly EMI for a loan.\"\"\"
+                r = annual_rate_pct / 100 / 12
+                if r == 0:
+                    emi = principal / months
+                else:
+                    emi = principal * r * (1 + r)**months / ((1 + r)**months - 1)
+                return {'emi': round(emi, 2), 'total': round(emi * months, 2),
+                        'interest': round(emi * months - principal, 2)}
+
+            def compound_interest(principal: float, annual_rate_pct: float,
+                                   years: float, n: int = 12) -> dict:
+                \"\"\"Calculate compound interest. n = compounds per year.\"\"\"
+                amount = principal * (1 + annual_rate_pct / 100 / n) ** (n * years)
+                return {'amount': round(amount, 2), 'interest': round(amount - principal, 2)}
+        """),
+    },
+
+    # ── Unit Converter ──────────────────────────────────────────────────────
+    "unit_converter": {
+        "name": "Unit Converter",
+        "description": "Convert between units: length, weight, temperature, speed, data size, pressure, energy",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "utilities",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def convert_units(value: float, from_unit: str, to_unit: str) -> dict:
+                \"\"\"Convert value from one unit to another. Example: convert_units(100, 'km', 'miles').\"\"\"
+                from_unit, to_unit = from_unit.lower(), to_unit.lower()
+                # Normalise to SI base, then convert out
+                _TO_SI = {
+                    # length (metre)
+                    'mm': 0.001, 'cm': 0.01, 'm': 1, 'km': 1000,
+                    'inch': 0.0254, 'inches': 0.0254, 'ft': 0.3048, 'feet': 0.3048,
+                    'yard': 0.9144, 'mile': 1609.34, 'miles': 1609.34,
+                    # weight (kg)
+                    'g': 0.001, 'kg': 1, 'lb': 0.453592, 'lbs': 0.453592,
+                    'oz': 0.0283495, 'tonne': 1000,
+                    # speed (m/s)
+                    'mph': 0.44704, 'kph': 0.277778, 'kmh': 0.277778,
+                    'knots': 0.514444, 'm/s': 1,
+                    # pressure (pascal)
+                    'pa': 1, 'kpa': 1000, 'mpa': 1e6, 'bar': 1e5,
+                    'psi': 6894.76, 'atm': 101325,
+                    # data (bytes)
+                    'b': 1, 'kb': 1024, 'mb': 1048576, 'gb': 1073741824,
+                    'tb': 1099511627776,
+                    # energy (joule)
+                    'j': 1, 'kj': 1000, 'cal': 4.184, 'kcal': 4184, 'wh': 3600, 'kwh': 3600000,
+                }
+                # Temperature handled separately
+                temp_units = {'c', 'f', 'k', 'celsius', 'fahrenheit', 'kelvin'}
+                if from_unit in temp_units and to_unit in temp_units:
+                    def to_kelvin(v, u):
+                        if u in ('c', 'celsius'): return v + 273.15
+                        if u in ('f', 'fahrenheit'): return (v - 32) * 5/9 + 273.15
+                        return v
+                    def from_kelvin(v, u):
+                        if u in ('c', 'celsius'): return v - 273.15
+                        if u in ('f', 'fahrenheit'): return (v - 273.15) * 9/5 + 32
+                        return v
+                    result = from_kelvin(to_kelvin(value, from_unit), to_unit)
+                    return {'value': value, 'from': from_unit, 'to': to_unit, 'result': round(result, 6)}
+                if from_unit not in _TO_SI or to_unit not in _TO_SI:
+                    return {'error': f'Unknown unit: {from_unit!r} or {to_unit!r}'}
+                si = value * _TO_SI[from_unit]
+                result = si / _TO_SI[to_unit]
+                return {'value': value, 'from': from_unit, 'to': to_unit, 'result': round(result, 8)}
+        """),
+    },
+
+    # ── Currency Exchange ───────────────────────────────────────────────────
+    "currency_exchange": {
+        "name": "Currency Exchange",
+        "description": "Convert between currencies using live exchange rates (open.er-api.com, no key needed)",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "finance",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def convert_currency(amount: float, from_currency: str, to_currency: str) -> dict:
+                \"\"\"Convert amount between currencies using live rates.\"\"\"
+                import httpx
+                base = from_currency.upper()
+                url = f'https://open.er-api.com/v6/latest/{base}'
+                r = httpx.get(url, timeout=10).json()
+                if r.get('result') != 'success':
+                    return {'error': 'Exchange rate fetch failed', 'detail': r}
+                target = to_currency.upper()
+                rates = r.get('rates', {})
+                if target not in rates:
+                    return {'error': f'Unsupported currency: {target}'}
+                rate = rates[target]
+                return {
+                    'amount': amount, 'from': base, 'to': target,
+                    'rate': rate, 'converted': round(amount * rate, 4),
+                    'updated': r.get('time_last_update_utc')
+                }
+        """),
+    },
+
+    # ── QR Code Generator ──────────────────────────────────────────────────
+    "qr_code_generator": {
+        "name": "QR Code Generator",
+        "description": "Generate a QR code PNG file from any text or URL",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "utilities",
+        "dependencies": ["qrcode[pil]"],
+        "code": textwrap.dedent("""\
+            def generate_qr(data: str, output_path: str = 'qrcode.png', box_size: int = 10) -> dict:
+                \"\"\"Generate a QR code image file for the given data.\"\"\"
+                import qrcode
+                qr = qrcode.QRCode(box_size=box_size, border=4)
+                qr.add_data(data)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color='black', back_color='white')
+                img.save(output_path)
+                return {'output': output_path, 'data': data}
+        """),
+    },
+
+    # ── JSON / Data Transformer ─────────────────────────────────────────────
+    "json_transformer": {
+        "name": "JSON / Data Transformer",
+        "description": "Parse, validate, transform, flatten, or diff JSON payloads",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "data",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def flatten_json(data: dict, sep: str = '.', prefix: str = '') -> dict:
+                \"\"\"Flatten a nested dict to dot-separated keys.\"\"\"
+                out = {}
+                for k, v in data.items():
+                    full_key = f'{prefix}{sep}{k}' if prefix else k
+                    if isinstance(v, dict):
+                        out.update(flatten_json(v, sep, full_key))
+                    elif isinstance(v, list):
+                        for i, item in enumerate(v):
+                            idx_key = f'{full_key}[{i}]'
+                            if isinstance(item, dict):
+                                out.update(flatten_json(item, sep, idx_key))
+                            else:
+                                out[idx_key] = item
+                    else:
+                        out[full_key] = v
+                return out
+
+            def diff_json(a: dict, b: dict) -> dict:
+                \"\"\"Return keys added, removed, or changed between two dicts.\"\"\"
+                fa, fb = flatten_json(a), flatten_json(b)
+                added = {k: fb[k] for k in fb if k not in fa}
+                removed = {k: fa[k] for k in fa if k not in fb}
+                changed = {k: {'old': fa[k], 'new': fb[k]} for k in fa if k in fb and fa[k] != fb[k]}
+                return {'added': added, 'removed': removed, 'changed': changed}
+        """),
+    },
+
+    # ── Cron / Schedule Parser ──────────────────────────────────────────────
+    "cron_parser": {
+        "name": "Cron Expression Parser",
+        "description": "Parse cron expressions and return the next N scheduled run times",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "utilities",
+        "dependencies": ["croniter"],
+        "code": textwrap.dedent("""\
+            def parse_cron(expression: str, next_n: int = 5) -> dict:
+                \"\"\"Return the next N execution times for a cron expression.\"\"\"
+                from croniter import croniter
+                import datetime
+                base = datetime.datetime.utcnow()
+                cron = croniter(expression, base)
+                times = [cron.get_next(datetime.datetime).isoformat() + 'Z' for _ in range(next_n)]
+                return {'expression': expression, 'next_runs': times}
+        """),
+    },
+
+    # ── Slack (no-auth webhook) ─────────────────────────────────────────────
+    "slack_webhook": {
+        "name": "Slack Webhook Notification",
+        "description": "Send notifications to a Slack channel via an Incoming Webhook URL",
+        "ecosystem": None,
+        "requires_auth": True,
+        "category": "communication",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def send_slack_message(webhook_url: str, text: str, username: str = 'Meta-Agent') -> dict:
+                \"\"\"Post a message to Slack via an Incoming Webhook URL.\"\"\"
+                import httpx
+                r = httpx.post(webhook_url, json={'text': text, 'username': username}, timeout=10)
+                return {'status': r.status_code, 'ok': r.text == 'ok'}
+        """),
+    },
+
+    # ── SMS / Twilio ────────────────────────────────────────────────────────
+    "sms_twilio": {
+        "name": "SMS via Twilio",
+        "description": "Send SMS messages via Twilio API",
+        "ecosystem": None,
+        "requires_auth": True,
+        "category": "communication",
+        "dependencies": ["twilio"],
+        "code": textwrap.dedent("""\
+            def send_sms(account_sid: str, auth_token: str, from_number: str,
+                         to_number: str, body: str) -> dict:
+                \"\"\"Send an SMS via Twilio.\"\"\"
+                from twilio.rest import Client
+                client = Client(account_sid, auth_token)
+                msg = client.messages.create(body=body, from_=from_number, to=to_number)
+                return {'sid': msg.sid, 'status': msg.status}
+        """),
+    },
 }
 
 
@@ -412,6 +712,631 @@ GENERATED_TOOL_TEMPLATES: Dict[str, Dict[str, Any]] = {
                 return ticket
         """),
     },
+
+    # ── IT / DevOps / Infrastructure ────────────────────────────────────────
+    "system_health_check": {
+        "name": "System Health Check",
+        "description": "Check CPU, memory, disk, and process health on the local host (for IT/ops monitoring)",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "infrastructure",
+        "dependencies": ["psutil"],
+        "code": textwrap.dedent("""\
+            def system_health() -> dict:
+                \"\"\"Return CPU, memory, disk, and top processes snapshot.\"\"\"
+                import psutil, datetime
+                cpu = psutil.cpu_percent(interval=1)
+                mem = psutil.virtual_memory()
+                disk = psutil.disk_usage('/')
+                top_procs = sorted(
+                    [{'pid': p.pid, 'name': p.info['name'], 'cpu': p.info['cpu_percent'],
+                      'mem_mb': round(p.info['memory_info'].rss / 1e6, 1)}
+                     for p in psutil.process_iter(['name', 'cpu_percent', 'memory_info'])
+                     if p.info['memory_info']],
+                    key=lambda x: x['mem_mb'], reverse=True
+                )[:5]
+                return {
+                    'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+                    'cpu_percent': cpu,
+                    'memory': {'total_gb': round(mem.total / 1e9, 2),
+                               'used_gb': round(mem.used / 1e9, 2),
+                               'percent': mem.percent},
+                    'disk': {'total_gb': round(disk.total / 1e9, 2),
+                             'used_gb': round(disk.used / 1e9, 2),
+                             'percent': disk.percent},
+                    'top_processes_by_memory': top_procs
+                }
+        """),
+    },
+    "port_scanner": {
+        "name": "Network Port Scanner",
+        "description": "Scan a host for open TCP ports — for network engineers and IT security auditing",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "networking",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def scan_ports(host: str, ports: list = None, timeout: float = 0.5) -> dict:
+                \"\"\"Scan TCP ports on a host. Default ports: common service ports.\"\"\"
+                import socket
+                if ports is None:
+                    ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
+                             3306, 3389, 5432, 5900, 6379, 8080, 8443, 27017]
+                open_ports, closed_ports = [], []
+                for port in ports:
+                    try:
+                        with socket.create_connection((host, port), timeout=timeout):
+                            open_ports.append(port)
+                    except (socket.timeout, ConnectionRefusedError, OSError):
+                        closed_ports.append(port)
+                return {'host': host, 'open': open_ports, 'closed': closed_ports,
+                        'total_scanned': len(ports)}
+        """),
+    },
+    "dns_lookup": {
+        "name": "DNS Lookup",
+        "description": "Resolve DNS records (A, AAAA, MX, TXT, CNAME) for a domain — for network/IT engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "networking",
+        "dependencies": ["dnspython"],
+        "code": textwrap.dedent("""\
+            def dns_lookup(domain: str, record_type: str = 'A') -> dict:
+                \"\"\"Resolve DNS records for a domain. record_type: A, AAAA, MX, TXT, CNAME, NS.\"\"\"
+                import dns.resolver
+                record_type = record_type.upper()
+                try:
+                    answers = dns.resolver.resolve(domain, record_type)
+                    records = [r.to_text() for r in answers]
+                    return {'domain': domain, 'type': record_type, 'records': records}
+                except Exception as e:
+                    return {'domain': domain, 'type': record_type, 'error': str(e)}
+        """),
+    },
+    "ssl_certificate_checker": {
+        "name": "SSL Certificate Checker",
+        "description": "Inspect SSL/TLS certificate details (expiry, issuer, SANs) for any domain — security & ops teams",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "security",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def check_ssl(hostname: str, port: int = 443) -> dict:
+                \"\"\"Return SSL certificate details including expiry date and issuer.\"\"\"
+                import ssl, socket, datetime
+                ctx = ssl.create_default_context()
+                with ctx.wrap_socket(socket.socket(), server_hostname=hostname) as s:
+                    s.settimeout(10)
+                    s.connect((hostname, port))
+                    cert = s.getpeercert()
+                not_after = datetime.datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+                days_left = (not_after - datetime.datetime.utcnow()).days
+                return {
+                    'hostname': hostname,
+                    'subject': dict(x[0] for x in cert.get('subject', [])),
+                    'issuer': dict(x[0] for x in cert.get('issuer', [])),
+                    'expires': cert['notAfter'],
+                    'days_until_expiry': days_left,
+                    'expired': days_left < 0,
+                    'san': [v for _, v in cert.get('subjectAltName', [])]
+                }
+        """),
+    },
+    "log_analyzer": {
+        "name": "Log File Analyzer",
+        "description": "Parse log files — count error levels, find patterns, tail recent lines. For SREs, IT managers, DevOps",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "infrastructure",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def analyze_log(path: str, tail_lines: int = 50, grep_pattern: str = '') -> dict:
+                \"\"\"Parse a log file: count ERROR/WARN/INFO, tail lines, optional grep filter.\"\"\"
+                import re, collections, pathlib
+                text = pathlib.Path(path).read_text(errors='replace')
+                lines = text.splitlines()
+                counts = collections.Counter()
+                for line in lines:
+                    for level in ('ERROR', 'CRITICAL', 'WARNING', 'WARN', 'INFO', 'DEBUG'):
+                        if level in line:
+                            counts[level] += 1
+                            break
+                tail = lines[-tail_lines:]
+                if grep_pattern:
+                    try:
+                        pat = re.compile(grep_pattern, re.IGNORECASE)
+                        tail = [l for l in tail if pat.search(l)]
+                    except re.error as e:
+                        return {'error': f'Invalid regex: {e}'}
+                return {
+                    'total_lines': len(lines),
+                    'level_counts': dict(counts),
+                    'tail': tail
+                }
+        """),
+    },
+    "api_health_monitor": {
+        "name": "API / Service Health Monitor",
+        "description": "Ping HTTP endpoints and report status, latency, and response — for IT, banking, airline uptime monitoring",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "infrastructure",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def check_api_health(endpoints: list) -> list:
+                \"\"\"
+                Check health of multiple HTTP endpoints.
+                endpoints: list of dicts with 'url' and optional 'expected_status' (default 200).
+                \"\"\"
+                import httpx, time
+                results = []
+                for ep in endpoints:
+                    url = ep.get('url') if isinstance(ep, dict) else ep
+                    expected = (ep.get('expected_status', 200) if isinstance(ep, dict) else 200)
+                    t0 = time.monotonic()
+                    try:
+                        r = httpx.get(url, timeout=10, follow_redirects=True)
+                        latency = round((time.monotonic() - t0) * 1000, 1)
+                        results.append({
+                            'url': url, 'status': r.status_code,
+                            'ok': r.status_code == expected,
+                            'latency_ms': latency
+                        })
+                    except Exception as e:
+                        results.append({'url': url, 'error': str(e), 'ok': False})
+                return results
+        """),
+    },
+    "docker_manager": {
+        "name": "Docker Container Manager",
+        "description": "List, inspect, start, stop Docker containers — for DevOps/SRE/IT managers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "infrastructure",
+        "dependencies": ["docker"],
+        "code": textwrap.dedent("""\
+            def list_containers(all_containers: bool = False) -> list:
+                \"\"\"List Docker containers. Set all_containers=True to include stopped ones.\"\"\"
+                import docker
+                client = docker.from_env()
+                containers = client.containers.list(all=all_containers)
+                return [{'id': c.short_id, 'name': c.name, 'status': c.status,
+                         'image': c.image.tags[0] if c.image.tags else 'untagged'}
+                        for c in containers]
+
+            def restart_container(container_name: str) -> dict:
+                \"\"\"Restart a Docker container by name.\"\"\"
+                import docker
+                client = docker.from_env()
+                c = client.containers.get(container_name)
+                c.restart()
+                c.reload()
+                return {'name': container_name, 'status': c.status}
+        """),
+    },
+    "git_operations": {
+        "name": "Git Repository Operations",
+        "description": "Clone, pull, log, diff, and inspect Git repositories — for software engineers and IT",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "devops",
+        "dependencies": ["gitpython"],
+        "code": textwrap.dedent("""\
+            def git_log(repo_path: str, max_entries: int = 10) -> list:
+                \"\"\"Return the last N commits from a Git repo.\"\"\"
+                import git
+                repo = git.Repo(repo_path)
+                return [{'sha': c.hexsha[:8], 'author': str(c.author),
+                         'date': c.committed_datetime.isoformat(),
+                         'message': c.message.strip().splitlines()[0]}
+                        for c in repo.iter_commits(max_count=max_entries)]
+
+            def git_status(repo_path: str) -> dict:
+                \"\"\"Return the working tree status of a Git repository.\"\"\"
+                import git
+                repo = git.Repo(repo_path)
+                return {
+                    'branch': repo.active_branch.name,
+                    'is_dirty': repo.is_dirty(),
+                    'untracked': repo.untracked_files,
+                    'modified': [d.a_path for d in repo.index.diff(None)],
+                    'staged': [d.a_path for d in repo.index.diff('HEAD')]
+                }
+        """),
+    },
+
+    # ── Banking / Finance / Compliance ──────────────────────────────────────
+    "iban_validator": {
+        "name": "IBAN / Account Validator",
+        "description": "Validate IBAN bank account numbers and extract bank country, check digit — for banking/fintech engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "finance",
+        "dependencies": ["schwifty"],
+        "code": textwrap.dedent("""\
+            def validate_iban(iban: str) -> dict:
+                \"\"\"Validate an IBAN and extract bank metadata.\"\"\"
+                from schwifty import IBAN
+                try:
+                    i = IBAN(iban)
+                    return {
+                        'iban': i.compact,
+                        'formatted': i.formatted,
+                        'valid': True,
+                        'country': i.country_code,
+                        'bank_code': i.bank_code,
+                        'account_code': i.account_code,
+                        'bic': str(i.bic) if i.bic else None
+                    }
+                except Exception as e:
+                    return {'iban': iban, 'valid': False, 'error': str(e)}
+        """),
+    },
+    "risk_calculator": {
+        "name": "Financial Risk Calculator",
+        "description": "Compute VaR, Sharpe ratio, and portfolio volatility — for banking/finance risk engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "finance",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def portfolio_var(returns: list, confidence: float = 0.95) -> dict:
+                \"\"\"
+                Calculate historical Value at Risk (VaR) at a given confidence level.
+                returns: list of daily return values (e.g. [0.01, -0.02, 0.005, ...])
+                \"\"\"
+                import math
+                sorted_r = sorted(returns)
+                idx = int((1 - confidence) * len(sorted_r))
+                var = abs(sorted_r[idx])
+                mean = sum(returns) / len(returns)
+                variance = sum((r - mean) ** 2 for r in returns) / len(returns)
+                std = math.sqrt(variance)
+                sharpe = (mean / std) * math.sqrt(252) if std > 0 else 0
+                return {
+                    'var': round(var, 6),
+                    'confidence': confidence,
+                    'sharpe_ratio_annualised': round(sharpe, 4),
+                    'daily_std': round(std, 6),
+                    'mean_return': round(mean, 6)
+                }
+        """),
+    },
+
+    # ── Healthcare / Medical ────────────────────────────────────────────────
+    "hl7_parser": {
+        "name": "HL7 Message Parser",
+        "description": "Parse HL7 v2.x messages into structured segments — for healthcare IT engineers and EHR integrators",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "healthcare",
+        "dependencies": ["hl7"],
+        "code": textwrap.dedent("""\
+            def parse_hl7(raw_message: str) -> dict:
+                \"\"\"
+                Parse an HL7 v2.x message string into segments.
+                Returns a dict with segment names as keys.
+                \"\"\"
+                import hl7
+                try:
+                    msg = hl7.parse(raw_message.strip())
+                    result = {}
+                    for segment in msg:
+                        name = str(segment[0])
+                        result.setdefault(name, []).append(
+                            [str(f) for f in segment]
+                        )
+                    return {'message_type': result.get('MSH', [[]])[0][8] if 'MSH' in result else 'unknown',
+                            'segments': result}
+                except Exception as e:
+                    return {'error': str(e)}
+        """),
+    },
+    "drug_interaction_checker": {
+        "name": "Drug Interaction Checker",
+        "description": "Check for drug interactions using the FDA openFDA API — for clinical/healthcare engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "healthcare",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def check_drug_interactions(drug_name: str) -> dict:
+                \"\"\"
+                Look up FDA adverse event reports and label warnings for a drug.
+                Uses the free openFDA API (no key needed).
+                \"\"\"
+                import httpx
+                base = 'https://api.fda.gov/drug/label.json'
+                r = httpx.get(base, params={'search': f'openfda.brand_name:"{drug_name}"', 'limit': 1}, timeout=10)
+                if r.status_code != 200:
+                    return {'error': f'FDA API error {r.status_code}'}
+                results = r.json().get('results', [])
+                if not results:
+                    return {'drug': drug_name, 'found': False}
+                label = results[0]
+                return {
+                    'drug': drug_name,
+                    'found': True,
+                    'warnings': label.get('warnings', []),
+                    'drug_interactions': label.get('drug_interactions', []),
+                    'contraindications': label.get('contraindications', [])
+                }
+        """),
+    },
+    "icd_code_lookup": {
+        "name": "ICD-10 Code Lookup",
+        "description": "Look up ICD-10 diagnosis codes and descriptions — for healthcare/medical record engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "healthcare",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def lookup_icd10(code_or_term: str) -> dict:
+                \"\"\"Search ICD-10 codes using the WHO/CMS public API.\"\"\"
+                import httpx
+                # Use the free clinicaltables.nlm.nih.gov API
+                url = 'https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search'
+                r = httpx.get(url, params={'sf': 'code,name', 'terms': code_or_term, 'maxList': 5}, timeout=10)
+                data = r.json()
+                # Response: [total, codes_list, extra, display_strs]
+                if not data or len(data) < 4:
+                    return {'error': 'No results'}
+                codes = data[1] or []
+                names = [d[1] if d else '' for d in (data[3] or [])]
+                return {
+                    'query': code_or_term,
+                    'total': data[0],
+                    'results': [{'code': c, 'description': n} for c, n in zip(codes, names)]
+                }
+        """),
+    },
+
+    # ── Airline / Transportation ────────────────────────────────────────────
+    "flight_status": {
+        "name": "Flight Status",
+        "description": "Get live flight status and schedule information via AviationStack API (free tier available)",
+        "ecosystem": None,
+        "requires_auth": True,
+        "category": "transportation",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def get_flight_status(flight_iata: str, api_key: str) -> dict:
+                \"\"\"
+                Get live status for a flight by IATA code (e.g. 'BA123').
+                Requires an AviationStack API key (free tier at aviationstack.com).
+                \"\"\"
+                import httpx
+                url = 'http://api.aviationstack.com/v1/flights'
+                r = httpx.get(url, params={'access_key': api_key, 'flight_iata': flight_iata}, timeout=15)
+                if r.status_code != 200:
+                    return {'error': f'API error {r.status_code}'}
+                data = r.json().get('data', [])
+                if not data:
+                    return {'flight': flight_iata, 'found': False}
+                f = data[0]
+                return {
+                    'flight': f.get('flight', {}).get('iata'),
+                    'status': f.get('flight_status'),
+                    'departure': f.get('departure', {}),
+                    'arrival': f.get('arrival', {}),
+                    'airline': f.get('airline', {}).get('name')
+                }
+        """),
+    },
+    "geolocation": {
+        "name": "IP Geolocation",
+        "description": "Geolocate an IP address (country, city, ISP, lat/lon) using ip-api.com — for network/security engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "networking",
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def geolocate_ip(ip: str) -> dict:
+                \"\"\"Return geolocation info for an IP address using the free ip-api.com service.\"\"\"
+                import httpx
+                r = httpx.get(f'http://ip-api.com/json/{ip}', timeout=10)
+                data = r.json()
+                if data.get('status') != 'success':
+                    return {'ip': ip, 'error': data.get('message', 'lookup failed')}
+                return {
+                    'ip': ip, 'country': data.get('country'),
+                    'region': data.get('regionName'), 'city': data.get('city'),
+                    'isp': data.get('isp'), 'org': data.get('org'),
+                    'lat': data.get('lat'), 'lon': data.get('lon'),
+                    'timezone': data.get('timezone')
+                }
+        """),
+    },
+
+    # ── Data Quality / Validation ────────────────────────────────────────────
+    "data_validator": {
+        "name": "Data Validator",
+        "description": "Validate emails, phone numbers, URLs, dates, and postcodes — for data engineers and system integrators",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "data",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def validate_email(email: str) -> dict:
+                \"\"\"Basic RFC-5321 email validation.\"\"\"
+                import re
+                pattern = r'^[\\w.+\\-]+@[\\w\\-]+\\.[a-z]{2,}$'
+                valid = bool(re.match(pattern, email, re.IGNORECASE))
+                return {'email': email, 'valid': valid}
+
+            def validate_url(url: str) -> dict:
+                \"\"\"Check if a URL has a valid scheme and netloc.\"\"\"
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                valid = parsed.scheme in ('http', 'https') and bool(parsed.netloc)
+                return {'url': url, 'valid': valid, 'scheme': parsed.scheme, 'host': parsed.netloc}
+
+            def validate_date(date_str: str, fmt: str = '%Y-%m-%d') -> dict:
+                \"\"\"Validate a date string against a format (default ISO 8601).\"\"\"
+                import datetime
+                try:
+                    dt = datetime.datetime.strptime(date_str, fmt)
+                    return {'date': date_str, 'valid': True, 'parsed': dt.isoformat()}
+                except ValueError as e:
+                    return {'date': date_str, 'valid': False, 'error': str(e)}
+        """),
+    },
+
+    # ── Cryptography / Security ─────────────────────────────────────────────
+    "hash_generator": {
+        "name": "Hash & Checksum Generator",
+        "description": "Generate MD5, SHA-1, SHA-256, SHA-512 hashes for text or files — for security and DevOps engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "security",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def hash_text(text: str, algorithm: str = 'sha256') -> dict:
+                \"\"\"Hash a string with the specified algorithm (md5, sha1, sha256, sha512).\"\"\"
+                import hashlib
+                try:
+                    h = hashlib.new(algorithm, text.encode('utf-8'))
+                    return {'algorithm': algorithm, 'input': text[:80], 'hash': h.hexdigest()}
+                except (ValueError, Exception) as e:
+                    return {'algorithm': algorithm, 'error': str(e)}
+
+            def hash_file(path: str, algorithm: str = 'sha256') -> dict:
+                \"\"\"Compute the hash of a file (streaming, handles large files).\"\"\"
+                import hashlib, pathlib
+                h = hashlib.new(algorithm)
+                data = pathlib.Path(path).read_bytes()
+                h.update(data)
+                return {'algorithm': algorithm, 'file': path,
+                        'hash': h.hexdigest(), 'size_bytes': len(data)}
+        """),
+    },
+
+    # ── Reporting / Scheduling ───────────────────────────────────────────────
+    "csv_processor": {
+        "name": "CSV Processor",
+        "description": "Read, filter, sort, summarise and export CSV files — for data analysts and reporting engineers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "data",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def read_csv(path: str, max_rows: int = 100) -> dict:
+                \"\"\"Read a CSV file and return headers plus the first max_rows rows.\"\"\"
+                import csv, pathlib
+                with pathlib.Path(path).open(newline='', encoding='utf-8-sig') as f:
+                    reader = csv.DictReader(f)
+                    rows = [row for row, _ in zip(reader, range(max_rows))]
+                return {'headers': list(rows[0].keys()) if rows else [], 'rows': rows,
+                        'count': len(rows)}
+
+            def filter_csv(path: str, column: str, value: str) -> list:
+                \"\"\"Return rows from a CSV where column equals value.\"\"\"
+                import csv, pathlib
+                with pathlib.Path(path).open(newline='', encoding='utf-8-sig') as f:
+                    return [row for row in csv.DictReader(f) if row.get(column) == value]
+
+            def summarise_csv(path: str, numeric_column: str) -> dict:
+                \"\"\"Return min, max, mean, and count for a numeric column in a CSV.\"\"\"
+                import csv, pathlib
+                values = []
+                with pathlib.Path(path).open(newline='', encoding='utf-8-sig') as f:
+                    for row in csv.DictReader(f):
+                        try:
+                            values.append(float(row[numeric_column]))
+                        except (ValueError, KeyError):
+                            pass
+                if not values:
+                    return {'error': f'No numeric values in column: {numeric_column}'}
+                return {'column': numeric_column, 'count': len(values),
+                        'min': min(values), 'max': max(values),
+                        'mean': round(sum(values) / len(values), 4)}
+        """),
+    },
+
+    # ── Airline/Transportation Ops ───────────────────────────────────────────
+    "maintenance_scheduler": {
+        "name": "Maintenance Schedule Manager",
+        "description": "Create, list, and update maintenance windows for systems/aircraft/equipment — for ops and engineering managers",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "operations",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def create_maintenance_window(asset_id: str, start_iso: str, end_iso: str,
+                                           description: str, engineer: str = '') -> dict:
+                \"\"\"Schedule a maintenance window for an asset (system, aircraft, equipment).\"\"\"
+                import json, pathlib, datetime, uuid
+                record = {
+                    'id': str(uuid.uuid4())[:8],
+                    'asset_id': asset_id,
+                    'start': start_iso,
+                    'end': end_iso,
+                    'description': description,
+                    'engineer': engineer,
+                    'status': 'scheduled',
+                    'created_at': datetime.datetime.utcnow().isoformat()
+                }
+                p = pathlib.Path('maintenance_windows.jsonl')
+                with p.open('a') as f:
+                    f.write(json.dumps(record) + '\\n')
+                return record
+
+            def list_maintenance_windows(asset_id: str = '') -> list:
+                \"\"\"List all maintenance windows, optionally filtered by asset_id.\"\"\"
+                import json, pathlib
+                p = pathlib.Path('maintenance_windows.jsonl')
+                if not p.exists():
+                    return []
+                windows = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+                return [w for w in windows if not asset_id or w['asset_id'] == asset_id]
+        """),
+    },
+
+    # ── Compliance / Audit ───────────────────────────────────────────────────
+    "audit_logger": {
+        "name": "Compliance Audit Logger",
+        "description": "Append immutable audit trail entries — for banking, healthcare, airline compliance and regulatory engineering",
+        "ecosystem": None,
+        "requires_auth": False,
+        "category": "compliance",
+        "dependencies": [],
+        "code": textwrap.dedent("""\
+            def log_audit_event(actor: str, action: str, resource: str,
+                                 outcome: str = 'success', metadata: dict = None) -> dict:
+                \"\"\"
+                Append an audit log entry. Immutable append-only.
+                outcome: 'success' | 'failure' | 'denied'
+                \"\"\"
+                import json, pathlib, datetime, hashlib
+                entry = {
+                    'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+                    'actor': actor,
+                    'action': action,
+                    'resource': resource,
+                    'outcome': outcome,
+                    'metadata': metadata or {}
+                }
+                # Integrity hash for tamper detection
+                entry['integrity'] = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
+                p = pathlib.Path('audit.jsonl')
+                with p.open('a') as f:
+                    f.write(json.dumps(entry) + '\\n')
+                return entry
+
+            def query_audit_log(actor: str = '', action: str = '', limit: int = 50) -> list:
+                \"\"\"Query the audit log by actor or action.\"\"\"
+                import json, pathlib
+                p = pathlib.Path('audit.jsonl')
+                if not p.exists():
+                    return []
+                entries = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+                if actor:
+                    entries = [e for e in entries if e.get('actor') == actor]
+                if action:
+                    entries = [e for e in entries if e.get('action') == action]
+                return entries[-limit:]
+        """),
+    },
 }
 
 
@@ -420,20 +1345,93 @@ GENERATED_TOOL_TEMPLATES: Dict[str, Dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 DOMAIN_TOOL_MAP: Dict[str, List[str]] = {
-    "customer_service":    ["escalate_to_human", "ticket_creator", "order_lookup", "gmail", "outlook_email", "database_query"],
-    "ecommerce":           ["order_lookup", "database_query", "gmail", "outlook_email", "web_search"],
-    "coding_assistant":    ["linter", "code_formatter", "test_runner", "code_executor", "file_operations", "web_search"],
-    "software_engineering": ["linter", "code_formatter", "test_runner", "code_executor", "file_operations", "web_search"],
-    "data_analysis":       ["database_query", "file_operations", "web_search", "http_request"],
-    "content_creation":    ["web_search", "file_operations", "sentiment_analyzer"],
-    "project_management":  ["google_calendar", "teams", "gmail", "outlook_email", "http_request"],
-    "research":            ["web_search", "pdf_reader", "database_query", "file_operations"],
-    "technical_support":   ["linter", "database_query", "web_search", "http_request", "escalate_to_human"],
-    "education":           ["web_search", "pdf_reader", "file_operations", "database_query"],
-    "finance":             ["database_query", "http_request", "gmail", "escalate_to_human"],
-    "healthcare":          ["database_query", "escalate_to_human", "gmail", "file_operations"],
-    "sales_marketing":     ["gmail", "outlook_email", "google_calendar", "web_search", "database_query"],
-    "general":             ["web_search", "file_operations", "http_request"],
+    # ── Customer-facing & commerce ──────────────────────────────────────────
+    "customer_service":    ["escalate_to_human", "ticket_creator", "order_lookup", "gmail",
+                            "outlook_email", "database_query", "sentiment_analyzer", "calculator"],
+    "ecommerce":           ["order_lookup", "database_query", "gmail", "outlook_email",
+                            "web_search", "calculator", "currency_exchange"],
+
+    # ── Software engineering ────────────────────────────────────────────────
+    "coding_assistant":    ["linter", "code_formatter", "test_runner", "code_executor",
+                            "file_operations", "web_search", "git_operations", "hash_generator"],
+    "software_engineering": ["linter", "code_formatter", "test_runner", "code_executor",
+                             "file_operations", "web_search", "git_operations",
+                             "ssl_certificate_checker", "dns_lookup", "hash_generator",
+                             "json_transformer", "audit_logger"],
+
+    # ── IT / DevOps / SRE ──────────────────────────────────────────────────
+    "devops":              ["docker_manager", "git_operations", "system_health_check",
+                            "api_health_monitor", "log_analyzer", "ssl_certificate_checker",
+                            "dns_lookup", "port_scanner", "cron_parser", "hash_generator",
+                            "audit_logger"],
+    "it_management":       ["system_health_check", "api_health_monitor", "log_analyzer",
+                            "port_scanner", "dns_lookup", "ssl_certificate_checker",
+                            "docker_manager", "ticket_creator", "escalate_to_human",
+                            "geolocation", "audit_logger"],
+    "technical_support":   ["linter", "database_query", "web_search", "http_request",
+                            "escalate_to_human", "system_health_check", "log_analyzer",
+                            "api_health_monitor", "ticket_creator"],
+    "networking":          ["port_scanner", "dns_lookup", "ssl_certificate_checker",
+                            "geolocation", "api_health_monitor", "http_request"],
+    "cybersecurity":       ["port_scanner", "ssl_certificate_checker", "hash_generator",
+                            "dns_lookup", "geolocation", "audit_logger", "log_analyzer"],
+
+    # ── Banking / Finance ───────────────────────────────────────────────────
+    "finance":             ["calculator", "currency_exchange", "iban_validator",
+                            "risk_calculator", "database_query", "http_request",
+                            "gmail", "escalate_to_human", "audit_logger", "csv_processor"],
+    "banking":             ["iban_validator", "risk_calculator", "calculator",
+                            "currency_exchange", "database_query", "audit_logger",
+                            "escalate_to_human", "ssl_certificate_checker", "hash_generator"],
+
+    # ── Healthcare / Medical ────────────────────────────────────────────────
+    "healthcare":          ["hl7_parser", "icd_code_lookup", "drug_interaction_checker",
+                            "database_query", "escalate_to_human", "gmail",
+                            "file_operations", "audit_logger", "data_validator"],
+    "medical":             ["hl7_parser", "icd_code_lookup", "drug_interaction_checker",
+                            "calculator", "database_query", "audit_logger"],
+
+    # ── Airline / Transportation ────────────────────────────────────────────
+    "airline":             ["flight_status", "maintenance_scheduler", "weather",
+                            "geolocation", "api_health_monitor", "audit_logger",
+                            "database_query", "calculator", "escalate_to_human"],
+    "transportation":      ["flight_status", "weather", "geolocation",
+                            "maintenance_scheduler", "calculator", "database_query"],
+
+    # ── Operations & Compliance ─────────────────────────────────────────────
+    "operations":          ["maintenance_scheduler", "audit_logger", "system_health_check",
+                            "api_health_monitor", "calculator", "csv_processor",
+                            "ticket_creator", "escalate_to_human"],
+    "compliance":          ["audit_logger", "hash_generator", "data_validator",
+                            "iban_validator", "database_query", "pdf_reader", "csv_processor"],
+
+    # ── Data & Analytics ────────────────────────────────────────────────────
+    "data_analysis":       ["database_query", "csv_processor", "file_operations",
+                            "web_search", "http_request", "json_transformer",
+                            "calculator", "data_validator"],
+    "data_engineering":    ["csv_processor", "json_transformer", "database_query",
+                            "data_validator", "file_operations", "hash_generator"],
+
+    # ── Content & Research ──────────────────────────────────────────────────
+    "content_creation":    ["web_search", "news_search", "file_operations",
+                            "sentiment_analyzer", "pdf_reader"],
+    "research":            ["web_search", "news_search", "pdf_reader", "database_query",
+                            "file_operations", "calculator", "icd_code_lookup"],
+
+    # ── Project Management / Comms ──────────────────────────────────────────
+    "project_management":  ["google_calendar", "teams", "gmail", "outlook_email",
+                            "http_request", "slack_webhook", "calculator", "ticket_creator"],
+    "sales_marketing":     ["gmail", "outlook_email", "google_calendar", "web_search",
+                            "news_search", "database_query", "sentiment_analyzer",
+                            "currency_exchange", "slack_webhook"],
+
+    # ── Education ───────────────────────────────────────────────────────────
+    "education":           ["web_search", "news_search", "pdf_reader", "file_operations",
+                            "database_query", "calculator", "unit_converter"],
+
+    # ── General fallback ────────────────────────────────────────────────────
+    "general":             ["web_search", "news_search", "weather", "calculator",
+                            "unit_converter", "file_operations", "http_request"],
 }
 
 
