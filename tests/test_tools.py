@@ -777,11 +777,11 @@ class TestDrugInteractionChecker:
     @pytest.mark.network
     def test_known_drug_aspirin(self):
         r = self.ns["check_drug_interactions"]("aspirin")
-        assert "interactions" in r or "results" in r or "error" in r
+        assert "drug_interactions" in r or "interactions" in r or "results" in r or "error" in r
 
     def test_empty_drug_name(self):
         r = self.ns["check_drug_interactions"]("")
-        assert "error" in r or "interactions" in r
+        assert "error" in r or "drug_interactions" in r or "interactions" in r
 
 
 # ============================================================================

@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from main import MetaAgentBuilder
 from tool_registry import get_ecosystem_groups
 from agent_scaffold import scaffold_agent, list_scaffolded_agents
+from docker_agent_scaffold import create_single_docker_agent, create_multi_docker_agent
 from model_selector import discover_models, recommend_model
 
 # ---------------------------------------------------------------------------
@@ -272,6 +273,97 @@ def get_tools():
 def get_agents():
     """Return all scaffolded agents from the agents/ directory."""
     return {"agents": list_scaffolded_agents()}
+
+
+# ---------------------------------------------------------------------------
+# Docker / Ceagent agent builder endpoints
+# ---------------------------------------------------------------------------
+
+class DockerToolset(BaseModel):
+    type: str = "builtin"        # "builtin" | "mcp"
+    name: Optional[str] = None   # for builtin: shell | filesystem | todo | thinking
+    reference: Optional[str] = None  # for mcp
+
+
+class SingleDockerAgentRequest(BaseModel):
+    agent_id: str
+    model: str = "dmr/ai/gemma3"
+    instruction: str
+    toolsets: List[DockerToolset] = [DockerToolset(type="builtin", name="thinking")]
+    port: int = 8301
+    # Optional labels forwarded from the build pipeline
+    agent_type: Optional[str] = None
+    domain: Optional[str] = None
+    complexity_level: Optional[int] = None
+    interaction_type: Optional[str] = None
+    autonomy_level: Optional[str] = None
+    problem_type: Optional[str] = None
+
+
+class DockerSubAgent(BaseModel):
+    agent_id: str
+    model: str = "dmr/ai/gemma3"
+    description: str = ""
+    instruction: str
+    toolsets: List[DockerToolset] = [DockerToolset(type="builtin", name="thinking")]
+
+
+class DockerRootAgent(BaseModel):
+    model: str = "dmr/ai/gemma3"
+    instruction: str = "You orchestrate specialised agents. Delegate tasks as needed."
+    toolsets: List[DockerToolset] = [DockerToolset(type="builtin", name="thinking")]
+
+
+class MultiDockerAgentRequest(BaseModel):
+    agent_id: str
+    root_agent: DockerRootAgent
+    sub_agents: List[DockerSubAgent]
+    port: int = 8401
+    # Optional labels
+    agent_type: Optional[str] = None
+    domain: Optional[str] = None
+    complexity_level: Optional[int] = None
+
+
+class DockerAgentResponse(BaseModel):
+    agent_id: str
+    scaffold_type: str       # "single_docker" | "multi_docker"
+    runtime: str             # "ceagent"
+    path: str
+    files_created: List[str]
+    ceagent_yaml: str
+    port: int
+    sub_agents: List[str] = []
+
+
+@app.post("/api/docker/single", response_model=DockerAgentResponse, tags=["Docker Agents"])
+def create_docker_single(request: SingleDockerAgentRequest):
+    """
+    Scaffold a Ceagent v2 single-agent Docker project.
+
+    Generates ceagent.yaml, Dockerfile, docker-compose.yml, .env.example,
+    README.md, and agent.json under agents/<agent_id>/.
+    """
+    try:
+        result = create_single_docker_agent(request.model_dump())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return DockerAgentResponse(**result)
+
+
+@app.post("/api/docker/multi", response_model=DockerAgentResponse, tags=["Docker Agents"])
+def create_docker_multi(request: MultiDockerAgentRequest):
+    """
+    Scaffold a Ceagent v2 multi-agent orchestration Docker project.
+
+    Creates a root orchestrator + one or more sub-agents, all wired in a
+    single ceagent.yaml. Generates Dockerfile, docker-compose.yml, etc.
+    """
+    try:
+        result = create_multi_docker_agent(request.model_dump())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return DockerAgentResponse(**result)
 
 
 @app.post("/api/chat", tags=["Agent"])

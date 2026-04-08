@@ -1337,6 +1337,131 @@ GENERATED_TOOL_TEMPLATES: Dict[str, Dict[str, Any]] = {
                 return entries[-limit:]
         """),
     },
+
+    # ── Docker / Ceagent agent builders ─────────────────────────────────────
+
+    "create_single_docker_agent": {
+        "name": "Create Single Docker Agent",
+        "description": (
+            "Scaffold a complete single-agent project using the Ceagent v2 YAML format with "
+            "Dockerfile and Docker Compose. Ideal for standalone specialized agents that run "
+            "inside Docker. Supports Docker Model Runner (DMR) for free local inference as well "
+            "as OpenAI, Anthropic, and Groq hosted models."
+        ),
+        "ecosystem": "docker",
+        "category": "deployment",
+        "requires_auth": False,
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def create_single_docker_agent(
+                agent_id: str,
+                model: str = "dmr/ai/gemma3",
+                instruction: str = "You are a helpful AI assistant.",
+                toolsets: list = None,
+                port: int = 8301,
+            ) -> dict:
+                \"\"\"
+                Create a complete single-agent Docker project using Ceagent v2 format.
+                The generated project contains ceagent.yaml, Dockerfile, docker-compose.yml,
+                .env.example, README.md, and agent.json.
+
+                Args:
+                    agent_id:    Short slug for the agent (used as folder and image name).
+                    model:       Ceagent model string, e.g. "dmr/ai/gemma3" for Docker Model
+                                 Runner local inference or "openai/gpt-4o" for OpenAI.
+                    instruction: System prompt / instruction for the agent.
+                    toolsets:    List of toolset dicts, e.g.
+                                 [{"type":"builtin","name":"thinking"},
+                                  {"type":"builtin","name":"shell"}].
+                                 Defaults to [{"type":"builtin","name":"thinking"}].
+                    port:        Host port to expose the agent on. Defaults to 8301.
+
+                Returns:
+                    dict with keys: agent_id, path, files_created, ceagent_yaml,
+                    port, scaffold_type, runtime.
+                \"\"\"
+                import httpx
+                payload = {
+                    "agent_id": agent_id,
+                    "model": model,
+                    "instruction": instruction,
+                    "toolsets": toolsets or [{"type": "builtin", "name": "thinking"}],
+                    "port": port,
+                }
+                resp = httpx.post(
+                    "http://localhost:8002/api/docker/single",
+                    json=payload,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        """),
+    },
+
+    "create_multi_docker_agent": {
+        "name": "Create Multi-Agent Docker Stack",
+        "description": (
+            "Scaffold a multi-agent Docker orchestration stack using the Ceagent v2 runtime. "
+            "Creates a root orchestrator agent that delegates tasks to one or more specialized "
+            "sub-agents via tool calls — all defined in a single ceagent.yaml. Use for complex "
+            "workflows requiring role separation (e.g. research + writing + review agents). "
+            "Supports Docker Model Runner for free local inference and cloud-hosted models."
+        ),
+        "ecosystem": "docker",
+        "category": "deployment",
+        "requires_auth": False,
+        "dependencies": ["httpx"],
+        "code": textwrap.dedent("""\
+            def create_multi_docker_agent(
+                agent_id: str,
+                root_agent: dict,
+                sub_agents: list,
+                port: int = 8401,
+            ) -> dict:
+                \"\"\"
+                Create a multi-agent Docker stack using Ceagent v2 orchestration.
+
+                Args:
+                    agent_id:   Short slug for the stack (folder and image name).
+                    root_agent: Dict with keys: model, instruction, toolsets.
+                                Example: {
+                                    "model": "openai/gpt-4o",
+                                    "instruction": "You orchestrate specialized agents.",
+                                    "toolsets": [{"type":"builtin","name":"thinking"}]
+                                }
+                    sub_agents: List of sub-agent dicts, each with keys:
+                                agent_id, model, description, instruction, toolsets.
+                                Example: [
+                                    {
+                                        "agent_id": "research_agent",
+                                        "model": "dmr/ai/gemma3",
+                                        "description": "Researches topics in depth.",
+                                        "instruction": "Research and summarise the topic.",
+                                        "toolsets": [{"type":"builtin","name":"thinking"}]
+                                    }
+                                ]
+                    port:       Host port for the stack. Defaults to 8401.
+
+                Returns:
+                    dict with keys: agent_id, path, files_created, ceagent_yaml,
+                    port, scaffold_type, runtime, sub_agents.
+                \"\"\"
+                import httpx
+                payload = {
+                    "agent_id": agent_id,
+                    "root_agent": root_agent,
+                    "sub_agents": sub_agents,
+                    "port": port,
+                }
+                resp = httpx.post(
+                    "http://localhost:8002/api/docker/multi",
+                    json=payload,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        """),
+    },
 }
 
 
