@@ -52,7 +52,7 @@ function BuilderView({ onAgentReady }) {
       const resp = await fetch('/api/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_description: jd }),
+        body: JSON.stringify({ job_description: jd, model: selectedModel, scaffold: true }),
       })
       if (!resp.ok) throw new Error(await resp.text())
       const data = await resp.json()
@@ -144,18 +144,25 @@ function BuilderView({ onAgentReady }) {
 
         {result && (
           <div className="results">
-            {/* Recommendation header */}
+            {/* Hero card */}
             <div className="result-card result-hero">
               <div className="hero-type">
                 <Badge
-                  label={result.recommendation.agent_type.replace('_', ' ').toUpperCase()}
-                  color={typeColors[result.recommendation.agent_type] || 'accent'}
+                  label={result.agent_type.replace('_', ' ').toUpperCase()}
+                  color={typeColors[result.agent_type] || 'accent'}
                 />
                 <span className="complexity-pill">
-                  Complexity {result.analysis.complexity_level}/5
+                  Complexity {result.complexity_level}/5
+                </span>
+                <span className={`source-pill source-${result.analysis_source}`}>
+                  {result.analysis_source === 'llm' ? '🧠 NLP' : '🔤 Keyword'}
                 </span>
               </div>
-              <p className="rationale">{result.recommendation.rationale}</p>
+              <div className="hero-name">{result.agent_name}</div>
+              <p className="rationale">{result.rationale}</p>
+              {result.scaffold_path && (
+                <p className="scaffold-note">📁 Scaffolded: <code>{result.scaffold_path}</code></p>
+              )}
             </div>
 
             {/* Analysis grid */}
@@ -164,10 +171,11 @@ function BuilderView({ onAgentReady }) {
                 <h4>Analysis</h4>
                 <table className="prop-table">
                   <tbody>
-                    <tr><td>Domain</td><td>{result.analysis.domain.replace('_', ' ')}</td></tr>
-                    <tr><td>Interaction</td><td>{result.analysis.interaction_type}</td></tr>
-                    <tr><td>Problem type</td><td>{result.analysis.problem_type}</td></tr>
-                    <tr><td>Autonomy</td><td>{result.analysis.autonomy_level}</td></tr>
+                    <tr><td>Domain</td><td>{result.domain.replace('_', ' ')}</td></tr>
+                    <tr><td>Sub-domain</td><td>{result.sub_domain.replace('_', ' ')}</td></tr>
+                    <tr><td>Interaction</td><td>{result.interaction_type}</td></tr>
+                    <tr><td>Problem type</td><td>{result.problem_type}</td></tr>
+                    <tr><td>Autonomy</td><td>{result.autonomy_level}</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -175,10 +183,10 @@ function BuilderView({ onAgentReady }) {
               <div className="result-card">
                 <h4>Capabilities</h4>
                 <div className="tag-list">
-                  {result.analysis.required_capabilities.map(c => (
+                  {result.required_capabilities.map(c => (
                     <span key={c} className="tag">{c}</span>
                   ))}
-                  {result.analysis.required_capabilities.length === 0 && (
+                  {result.required_capabilities.length === 0 && (
                     <span className="text-muted">None detected</span>
                   )}
                 </div>
@@ -187,23 +195,25 @@ function BuilderView({ onAgentReady }) {
               <div className="result-card">
                 <h4>Tools</h4>
                 <div className="tag-list">
-                  {result.recommendation.required_tools.slice(0, 10).map(t => (
-                    <span key={t} className="tag tag-tool">{t.replace('_', ' ')}</span>
+                  {result.recommended_tools.slice(0, 10).map(t => (
+                    <span key={t} className="tag tag-tool">{t.replace(/_/g, ' ')}</span>
                   ))}
-                  {result.recommendation.required_tools.length > 10 && (
-                    <span className="tag tag-more">+{result.recommendation.required_tools.length - 10} more</span>
+                  {result.recommended_tools.length > 10 && (
+                    <span className="tag tag-more">+{result.recommended_tools.length - 10} more</span>
                   )}
                 </div>
               </div>
 
-              <div className="result-card">
-                <h4>Safety</h4>
-                <ul className="safety-list">
-                  {result.recommendation.safety_considerations.map(s => (
-                    <li key={s}>{s}</li>
-                  ))}
-                </ul>
-              </div>
+              {result.custom_tools_needed && result.custom_tools_needed.length > 0 && (
+                <div className="result-card">
+                  <h4>Custom Tools Needed</h4>
+                  <ul className="safety-list">
+                    {result.custom_tools_needed.map((t, i) => (
+                      <li key={i}><strong>{t.name}</strong> — {t.description}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             {/* System prompt */}
@@ -307,9 +317,10 @@ function ChatView({ agentData, model, onBack }) {
     }
   }
 
-  const agentName = (agentData.recommendation.agent_type || 'agent')
-    .replace('_', ' ')
-    .replace(/\b\w/g, c => c.toUpperCase()) + ' Agent'
+  const agentName = agentData.agent_name ||
+    (agentData.agent_type || 'agent')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase()) + ' Agent'
 
   return (
     <div className="chat-layout">
@@ -386,6 +397,141 @@ function ChatView({ agentData, model, onBack }) {
   )
 }
 
+// ─── Tools screen ─────────────────────────────────────────────────────────────
+
+function ToolsView() {
+  const [groups, setGroups] = useState(null)
+  const [error, setError] = useState('')
+  const [connected, setConnected] = useState({})
+
+  useEffect(() => {
+    fetch('/api/tools')
+      .then(r => r.json())
+      .then(setGroups)
+      .catch(() => setError('Could not load tools.'))
+  }, [])
+
+  const ecosystemColors = {
+    google: 'blue',
+    microsoft: 'purple',
+    standalone: 'green',
+    generated: 'orange',
+  }
+
+  function toggleConnect(ecosystem) {
+    setConnected(prev => ({ ...prev, [ecosystem]: !prev[ecosystem] }))
+  }
+
+  if (error) return <div className="error-box">{error}</div>
+  if (!groups) return <div className="empty-state"><Spinner /></div>
+
+  return (
+    <div className="tools-layout">
+      <div className="panel-header" style={{ padding: '1.5rem 2rem 0' }}>
+        <h2>Tool Marketplace</h2>
+        <p className="panel-sub">Connect ecosystems and discover available tools</p>
+      </div>
+      {Object.entries(groups).map(([ecosystem, tools]) => (
+        <div key={ecosystem} className="ecosystem-section">
+          <div className="ecosystem-header">
+            <h3 className="ecosystem-title">
+              <Badge label={ecosystem.toUpperCase()} color={ecosystemColors[ecosystem] || 'accent'} />
+              &nbsp; {ecosystem.charAt(0).toUpperCase() + ecosystem.slice(1)} Tools
+            </h3>
+            {ecosystem !== 'standalone' && ecosystem !== 'generated' && (
+              <button
+                className={`btn ${connected[ecosystem] ? 'btn-success' : 'btn-outline'}`}
+                onClick={() => toggleConnect(ecosystem)}
+              >
+                {connected[ecosystem] ? '✓ Connected' : `Connect ${ecosystem.charAt(0).toUpperCase() + ecosystem.slice(1)}`}
+              </button>
+            )}
+          </div>
+          <div className="tools-grid">
+            {Object.entries(tools).map(([toolId, tool]) => (
+              <div key={toolId} className="tool-card">
+                <div className="tool-card-header">
+                  <strong>{tool.name}</strong>
+                  {tool.requires_auth && (
+                    <span className="tag tag-tool" style={{ marginLeft: 'auto' }}>🔐 auth</span>
+                  )}
+                </div>
+                <p className="tool-description">{tool.description}</p>
+                <div className="tool-footer">
+                  <code className="tool-id">{toolId}</code>
+                  {tool.requires_auth && connected[ecosystem] && (
+                    <span className="connected-badge">✓ ready</span>
+                  )}
+                  {!tool.requires_auth && (
+                    <span className="connected-badge">✓ ready</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Agents screen ────────────────────────────────────────────────────────────
+
+function AgentsView({ onChatWithAgent }) {
+  const [agents, setAgents] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch('/api/agents')
+      .then(r => r.json())
+      .then(data => setAgents(data.agents || []))
+      .catch(() => setError('Could not load agents.'))
+  }, [])
+
+  if (error) return <div className="error-box">{error}</div>
+  if (!agents) return <div className="empty-state"><Spinner /></div>
+
+  if (agents.length === 0) return (
+    <div className="empty-state">
+      <div className="empty-icon">🤖</div>
+      <h3>No Agents Yet</h3>
+      <p>Build your first agent in the <strong>Builder</strong> tab.</p>
+    </div>
+  )
+
+  return (
+    <div className="agents-layout">
+      <div className="panel-header" style={{ padding: '1.5rem 2rem 0' }}>
+        <h2>Agent Library</h2>
+        <p className="panel-sub">{agents.length} scaffolded agent{agents.length !== 1 ? 's' : ''}</p>
+      </div>
+      <div className="agents-grid">
+        {agents.map(agent => (
+          <div key={agent.id} className="agent-card">
+            <div className="agent-card-header">
+              <strong>{agent.name || agent.id}</strong>
+              <Badge label={agent.agent_type?.replace('_', ' ') || 'agent'} color="blue" />
+            </div>
+            <p className="tool-description">
+              Domain: <strong>{(agent.domain || 'general').replace('_', ' ')}</strong>
+            </p>
+            <div className="tool-footer">
+              <code className="tool-id">{agent.id}</code>
+              <button
+                className="btn btn-primary"
+                style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+                onClick={() => onChatWithAgent(agent)}
+              >
+                💬 Chat
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── App root ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -395,7 +541,18 @@ export default function App() {
 
   function handleAgentReady(data, selectedModel) {
     setAgentData(data)
-    setModel(selectedModel)
+    setModel(selectedModel || 'gemma3:latest')
+    setView('chat')
+  }
+
+  function handleChatWithAgent(agent) {
+    // Build a minimal agentData from a scaffolded agent record
+    setAgentData({
+      agent_name: agent.name || agent.id,
+      agent_type: agent.agent_type || 'conversational',
+      system_prompt: agent.system_prompt || '',
+    })
+    setModel('gemma3:latest')
     setView('chat')
   }
 
@@ -411,11 +568,23 @@ export default function App() {
             Builder
           </button>
           <button
+            className={`nav-btn ${view === 'tools' ? 'active' : ''}`}
+            onClick={() => setView('tools')}
+          >
+            Tools
+          </button>
+          <button
+            className={`nav-btn ${view === 'agents' ? 'active' : ''}`}
+            onClick={() => setView('agents')}
+          >
+            Agents
+          </button>
+          <button
             className={`nav-btn ${view === 'chat' ? 'active' : ''}`}
             onClick={() => setView('chat')}
             disabled={!agentData}
           >
-            Chat {agentData ? `(${agentData.recommendation.agent_type.replace('_', ' ')})` : ''}
+            Chat {agentData ? `(${(agentData.agent_type || 'agent').replace('_', ' ')})` : ''}
           </button>
         </nav>
       </header>
@@ -423,6 +592,12 @@ export default function App() {
       <main className="app-main">
         {view === 'builder' && (
           <BuilderView onAgentReady={handleAgentReady} />
+        )}
+        {view === 'tools' && (
+          <ToolsView />
+        )}
+        {view === 'agents' && (
+          <AgentsView onChatWithAgent={handleChatWithAgent} />
         )}
         {view === 'chat' && agentData && (
           <ChatView

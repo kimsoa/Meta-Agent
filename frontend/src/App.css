@@ -586,3 +586,36 @@
     max-width: 90%;
   }
 }
+
+/* ─── Source pill (NLP vs keyword) ──────────────────────────────────────────── */
+.source-pill { display:inline-block; padding:.2rem .55rem; border-radius:99px; font-size:.7rem; font-weight:600; }
+.source-llm { background:rgba(108,99,255,.15); color:var(--accent); }
+.source-keyword_fallback { background:rgba(255,200,0,.15); color:#b8860b; }
+.hero-name { font-size:1.1rem; font-weight:700; margin:.5rem 0 .25rem; }
+.scaffold-note { font-size:.78rem; color:var(--text-muted); margin:.5rem 0 0; }
+.scaffold-note code { background:var(--bg); padding:1px 5px; border-radius:4px; }
+
+/* ─── Buttons additional variants ────────────────────────────────────────────── */
+.btn-success { background:#2ecc71; color:#fff; border:none; }
+.btn-success:hover { background:#27ae60; }
+.btn-outline { background:transparent; color:var(--text-muted); border:1px solid var(--border); }
+.btn-outline:hover { background:rgba(108,99,255,.1); color:var(--text); }
+
+/* ─── Tools Marketplace ──────────────────────────────────────────────────────── */
+.tools-layout { display:flex; flex-direction:column; height:100%; overflow-y:auto; }
+.ecosystem-section { padding:1rem 2rem 1.5rem; border-bottom:1px solid var(--border); }
+.ecosystem-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; }
+.ecosystem-title { display:flex; align-items:center; gap:.5rem; font-size:1rem; font-weight:600; margin:0; }
+.tools-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:.75rem; }
+.tool-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem; display:flex; flex-direction:column; gap:.5rem; }
+.tool-card-header { display:flex; align-items:center; gap:.5rem; font-size:.9rem; }
+.tool-description { font-size:.8rem; color:var(--text-muted); margin:0; line-height:1.5; flex:1; }
+.tool-footer { display:flex; align-items:center; justify-content:space-between; margin-top:.25rem; }
+.tool-id { font-size:.72rem; color:var(--text-muted); background:var(--bg); padding:2px 6px; border-radius:4px; }
+.connected-badge { font-size:.72rem; color:#2ecc71; font-weight:600; }
+
+/* ─── Agents Library ─────────────────────────────────────────────────────────── */
+.agents-layout { display:flex; flex-direction:column; height:100%; overflow-y:auto; }
+.agents-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:.75rem; padding:1.5rem 2rem; }
+.agent-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem; display:flex; flex-direction:column; gap:.5rem; }
+.agent-card-header { display:flex; align-items:center; justify-content:space-between; gap:.5rem; font-size:.9rem; }

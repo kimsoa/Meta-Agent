@@ -3,18 +3,19 @@ Meta-Agent Builder — FastAPI Web Application
 
 Endpoints:
   GET  /                      → SPA or welcome page
+  GET  /api/health            → health check
   GET  /api/agent-types       → list all available agent types
   GET  /api/models            → list available Ollama models
-  POST /api/analyze           → analyze a job description
-  POST /api/recommend         → analyze + recommend agent type
-  POST /api/build             → full pipeline: analyze + recommend + system prompt
+  POST /api/build             → NLP-first build: analyse (Ollama) → scaffold agent
   POST /api/chat              → chat with a generated agent via Ollama (streaming SSE)
+  GET  /api/tools             → list all tools grouped by ecosystem
+  GET  /api/agents            → list all scaffolded agents
 """
 
 import os
 import json
 from pathlib import Path
-from typing import Dict, List, Any, AsyncIterator
+from typing import Dict, List, Any, AsyncIterator, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -24,6 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from main import MetaAgentBuilder
+from tool_registry import get_ecosystem_groups
+from agent_scaffold import scaffold_agent, list_scaffolded_agents
 
 # ---------------------------------------------------------------------------
 # Config
@@ -62,43 +65,45 @@ _builder = MetaAgentBuilder()
 # Request / Response models
 # ---------------------------------------------------------------------------
 
+# Legacy kept for /api/analyze backward compat
 class JobDescriptionRequest(BaseModel):
+    job_description: str = Field(
+        ...,
+        min_length=20,
+        description="The job description or task specification for the agent to fulfill.",
+    )
+
+
+class BuildRequest(BaseModel):
     job_description: str = Field(
         ...,
         min_length=20,
         description="The job description or task specification for the agent to fulfill.",
         example=(
             "We need an AI agent to handle customer service for an e-commerce platform. "
-            "It should answer questions, check order status via our database, send emails, "
-            "remember conversation history, and escalate to human agents when needed."
+            "It should answer questions, check order status, send emails, and escalate."
         ),
     )
-
-
-class AnalysisResponse(BaseModel):
-    domain: str
-    complexity_level: int
-    interaction_type: str
-    required_capabilities: List[str]
-    problem_type: str
-    autonomy_level: str
-    performance_requirements: Dict[str, str]
-
-
-class RecommendationResponse(BaseModel):
-    agent_type: str
-    rationale: str
-    characteristics: List[str]
-    use_cases: List[str]
-    required_tools: List[str]
-    safety_considerations: List[str]
-    performance_profile: Dict[str, str]
+    model: str = Field(default=DEFAULT_MODEL, description="Ollama model to use for NLP analysis")
+    scaffold: bool = Field(default=True, description="Whether to scaffold agent microservice folder")
 
 
 class BuildResponse(BaseModel):
-    analysis: AnalysisResponse
-    recommendation: RecommendationResponse
+    agent_name: str
+    agent_type: str
+    domain: str
+    sub_domain: str
+    complexity_level: int
+    interaction_type: str
+    autonomy_level: str
+    problem_type: str
+    required_capabilities: List[str]
+    recommended_tools: List[str]
+    custom_tools_needed: List[Dict[str, str]]
+    rationale: str
     system_prompt: str
+    analysis_source: str
+    scaffold_path: Optional[str] = None
 
 
 class Message(BaseModel):
@@ -177,72 +182,63 @@ async def get_models():
         raise HTTPException(status_code=503, detail=f"Ollama unreachable: {exc}")
 
 
-@app.post("/api/analyze", response_model=AnalysisResponse, tags=["Pipeline"])
-def analyze(request: JobDescriptionRequest):
-    try:
-        result = _builder.analyze_job_description(request.job_description)
-        return AnalysisResponse(
-            domain=result["domain"],
-            complexity_level=result["complexity_level"],
-            interaction_type=result["interaction_type"],
-            required_capabilities=result["required_capabilities"],
-            problem_type=result["problem_type"],
-            autonomy_level=result["autonomy_level"],
-            performance_requirements=result["performance_requirements"],
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.post("/api/recommend", response_model=RecommendationResponse, tags=["Pipeline"])
-def recommend(request: JobDescriptionRequest):
-    try:
-        analysis = _builder.analyze_job_description(request.job_description)
-        _, rec = _builder.recommend_agent_type(analysis)
-        return RecommendationResponse(
-            agent_type=rec["agent_type"],
-            rationale=rec["rationale"],
-            characteristics=rec["configuration"]["characteristics"],
-            use_cases=rec["configuration"]["use_cases"],
-            required_tools=rec["required_tools"],
-            safety_considerations=rec["safety_considerations"],
-            performance_profile=rec["performance_profile"],
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
 @app.post("/api/build", response_model=BuildResponse, tags=["Pipeline"])
-def build_agent(request: JobDescriptionRequest):
-    """Full pipeline → analysis + recommendation + system prompt."""
+async def build_agent(request: BuildRequest):
+    """
+    NLP-first pipeline: Ollama LLM analysis (with keyword fallback) → optional
+    agent microservice scaffolding → returns full specification.
+    """
     try:
-        analysis = _builder.analyze_job_description(request.job_description)
-        _, rec = _builder.recommend_agent_type(analysis)
-        system_prompt = _builder.generate_system_prompt(analysis, rec)
+        try:
+            spec = await _builder.analyse_with_llm(request.job_description, request.model)
+        except Exception:
+            spec = _builder.analyse_fallback(request.job_description)
+
+        scaffold_path: Optional[str] = None
+        if request.scaffold:
+            import re as _re
+            agent_id = _re.sub(r"[^a-z0-9_]", "_", spec.get("agent_name", "agent").lower())
+            result = scaffold_agent(
+                agent_id=agent_id,
+                agent_type=spec["agent_type"],
+                domain=spec["domain"],
+                system_prompt=spec["system_prompt"],
+                tool_ids=spec["recommended_tools"],
+                analysis=spec,
+            )
+            scaffold_path = result.get("path")
 
         return BuildResponse(
-            analysis=AnalysisResponse(
-                domain=analysis["domain"],
-                complexity_level=analysis["complexity_level"],
-                interaction_type=analysis["interaction_type"],
-                required_capabilities=analysis["required_capabilities"],
-                problem_type=analysis["problem_type"],
-                autonomy_level=analysis["autonomy_level"],
-                performance_requirements=analysis["performance_requirements"],
-            ),
-            recommendation=RecommendationResponse(
-                agent_type=rec["agent_type"],
-                rationale=rec["rationale"],
-                characteristics=rec["configuration"]["characteristics"],
-                use_cases=rec["configuration"]["use_cases"],
-                required_tools=rec["required_tools"],
-                safety_considerations=rec["safety_considerations"],
-                performance_profile=rec["performance_profile"],
-            ),
-            system_prompt=system_prompt,
+            agent_name=spec.get("agent_name", "Agent"),
+            agent_type=spec["agent_type"],
+            domain=spec["domain"],
+            sub_domain=spec.get("sub_domain", spec["domain"]),
+            complexity_level=spec["complexity_level"],
+            interaction_type=spec["interaction_type"],
+            autonomy_level=spec["autonomy_level"],
+            problem_type=spec["problem_type"],
+            required_capabilities=spec.get("required_capabilities", []),
+            recommended_tools=spec.get("recommended_tools", []),
+            custom_tools_needed=spec.get("custom_tools_needed", []),
+            rationale=spec.get("rationale", ""),
+            system_prompt=spec["system_prompt"],
+            analysis_source=spec.get("analysis_source", "llm"),
+            scaffold_path=scaffold_path,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/tools", tags=["Tools"])
+def get_tools():
+    """Return all available tools grouped by ecosystem."""
+    return get_ecosystem_groups()
+
+
+@app.get("/api/agents", tags=["Agents"])
+def get_agents():
+    """Return all scaffolded agents from the agents/ directory."""
+    return {"agents": list_scaffolded_agents()}
 
 
 @app.post("/api/chat", tags=["Agent"])

@@ -1,0 +1,20 @@
+{
+  "agent_id": "customer_service_agent",
+  "agent_type": "conversational",
+  "domain": "customer_service",
+  "created_at": "2026-04-08T01:20:53.932182+00:00",
+  "tools": [
+    "escalate_to_human",
+    "ticket_creator",
+    "order_lookup",
+    "gmail",
+    "outlook_email",
+    "database_query"
+  ],
+  "analysis_summary": {
+    "complexity_level": 1,
+    "interaction_type": "conversational",
+    "problem_type": "ignorable",
+    "autonomy_level": "medium"
+  }
+}

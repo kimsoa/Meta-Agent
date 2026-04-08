@@ -1,0 +1,11 @@
+version: '3.9'
+services:
+  customer_service_agent:
+    build: .
+    ports:
+      - "8100:8100"
+    environment:
+      OLLAMA_URL: http://host-gateway:11434
+      MODEL: gemma3:latest
+    extra_hosts:
+      - "host-gateway:host-gateway"
