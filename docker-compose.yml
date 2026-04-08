@@ -1,0 +1,13 @@
+services:
+  meta-agent:
+    build: .
+    container_name: meta-agent-api
+    ports:
+      - "8002:8002"
+    environment:
+      # Points the container at the host's Ollama instance
+      - OLLAMA_URL=http://host-gateway:11434
+      - DEFAULT_MODEL=gemma3:latest
+    extra_hosts:
+      - "host-gateway:host-gateway"
+    restart: unless-stopped
