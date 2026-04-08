@@ -11,6 +11,32 @@ function Spinner() {
   return <span className="spinner" aria-label="loading" />
 }
 
+function toTitle(str) {
+  return str.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function parseInline(text) {
+  const tokens = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/)
+  return tokens.map((token, i) => {
+    if (/^\*\*(.+)\*\*$/.test(token)) return <strong key={i}>{token.slice(2, -2)}</strong>
+    if (/^\*(.+)\*$/.test(token)) return <em key={i}>{token.slice(1, -1)}</em>
+    if (/^`(.+)`$/.test(token)) return <code key={i} style={{ background: 'rgba(255,255,255,0.1)', padding: '0 3px', borderRadius: 3 }}>{token.slice(1, -1)}</code>
+    return token
+  })
+}
+
+function renderMarkdown(text) {
+  if (!text) return null
+  return text.split('\n').map((line, idx) => {
+    const listMatch = /^[*\-]\s+(.+)$/.exec(line)
+    if (listMatch) {
+      return <li key={idx} style={{ marginLeft: '1.2rem', listStyle: 'disc' }}>{parseInline(listMatch[1])}</li>
+    }
+    if (line === '') return <br key={idx} />
+    return <p key={idx} style={{ margin: '0.2em 0' }}>{parseInline(line)}</p>
+  })
+}
+
 // ─── Builder screen ───────────────────────────────────────────────────────────
 
 function BuilderView({ onAgentReady }) {
@@ -363,10 +389,13 @@ function ChatView({ agentData, model, onBack }) {
               {msg.role === 'user' ? 'You' : agentName}
             </div>
             <div className="message-content">
-              {msg.content || (streaming && i === messages.length - 1
-                ? <span className="cursor-blink">▋</span>
-                : ''
-              )}
+              {msg.content
+                ? renderMarkdown(msg.content)
+                : (streaming && i === messages.length - 1
+                    ? <span className="cursor-blink">▋</span>
+                    : ''
+                  )
+              }
             </div>
           </div>
         ))}
@@ -448,8 +477,8 @@ function ToolsView() {
             )}
           </div>
           <div className="tools-grid">
-            {Object.entries(tools).map(([toolId, tool]) => (
-              <div key={toolId} className="tool-card">
+            {(Array.isArray(tools) ? tools : Object.values(tools)).map(tool => (
+              <div key={tool.id} className="tool-card">
                 <div className="tool-card-header">
                   <strong>{tool.name}</strong>
                   {tool.requires_auth && (
@@ -458,7 +487,7 @@ function ToolsView() {
                 </div>
                 <p className="tool-description">{tool.description}</p>
                 <div className="tool-footer">
-                  <code className="tool-id">{toolId}</code>
+                  <code className="tool-id">{tool.id}</code>
                   {tool.requires_auth && connected[ecosystem] && (
                     <span className="connected-badge">✓ ready</span>
                   )}
@@ -507,16 +536,16 @@ function AgentsView({ onChatWithAgent }) {
       </div>
       <div className="agents-grid">
         {agents.map(agent => (
-          <div key={agent.id} className="agent-card">
+          <div key={agent.agent_id} className="agent-card">
             <div className="agent-card-header">
-              <strong>{agent.name || agent.id}</strong>
+              <strong>{agent.agent_name || toTitle(agent.agent_id || '')}</strong>
               <Badge label={agent.agent_type?.replace('_', ' ') || 'agent'} color="blue" />
             </div>
             <p className="tool-description">
-              Domain: <strong>{(agent.domain || 'general').replace('_', ' ')}</strong>
+              Domain: <strong>{toTitle(agent.domain || 'general')}</strong>
             </p>
             <div className="tool-footer">
-              <code className="tool-id">{agent.id}</code>
+              <code className="tool-id">{agent.agent_id}</code>
               <button
                 className="btn btn-primary"
                 style={{ padding: '4px 12px', fontSize: '0.8rem' }}
@@ -548,7 +577,7 @@ export default function App() {
   function handleChatWithAgent(agent) {
     // Build a minimal agentData from a scaffolded agent record
     setAgentData({
-      agent_name: agent.name || agent.id,
+      agent_name: agent.agent_name || toTitle(agent.agent_id || ''),
       agent_type: agent.agent_type || 'conversational',
       system_prompt: agent.system_prompt || '',
     })
