@@ -25,7 +25,7 @@ Return ONLY a single valid JSON object — no markdown fences, no prose, no
 commentary. The object must conform to this schema exactly:
 
 {
-  "domain": "<primary domain slug, e.g. e_commerce, coding_assistant, healthcare>",
+  "domain": "<primary domain slug, e.g. ecommerce, coding_assistant, healthcare, finance, data_analysis>",
   "sub_domain": "<specific area, e.g. post_purchase_support, code_review_automation>",
   "agent_type": "<simple_reflex | model_based | goal_based | utility_based | conversational | automated>",
   "complexity_level": <integer 1-5>,
@@ -290,16 +290,16 @@ class MetaAgentBuilder:
     def _kw_domain(self, text: str) -> str:
         domains = {
             "customer_service":   ["customer", "support", "helpdesk", "complaint"],
-            "ecommerce":          ["order", "product", "cart", "checkout", "shipping", "inventory"],
-            "coding_assistant":   ["code", "debug", "lint", "test", "refactor", "developer", "programming"],
-            "data_analysis":      ["data", "analysis", "analytics", "insights", "reporting", "dashboard"],
+            "ecommerce":          ["ecommerce", "e-commerce", "order", "product", "cart", "checkout", "shipping", "inventory"],
+            "coding_assistant":   ["code", "debug", "lint", "refactor", "developer", "programming", "software", "engineering", "architecture"],
+            "finance":            ["financial", "finance", "invoice", "budget", "portfolio", "investment", "trading", "stock", "revenue", "accounting"],
+            "data_analysis":      ["data", "analysis", "analytics", "insights", "reporting", "dashboard", "csv", "dataset"],
             "content_creation":   ["content", "writing", "blog", "article", "creative", "copywriting"],
             "project_management": ["project", "manage", "coordinate", "milestone", "deadline", "sprint"],
             "research":           ["research", "investigate", "literature", "study", "explore"],
             "sales_marketing":    ["sales", "marketing", "promote", "campaign", "lead", "crm"],
-            "technical_support":  ["technical", "troubleshoot", "debug", "maintain", "infrastructure"],
+            "technical_support":  ["technical", "troubleshoot", "maintain", "infrastructure", "devops"],
             "education":          ["teach", "train", "educate", "learn", "course", "student"],
-            "finance":            ["financial", "invoice", "budget", "cost", "revenue", "accounting"],
             "healthcare":         ["health", "medical", "patient", "doctor", "clinical", "treatment"],
         }
         for domain, kws in domains.items():

@@ -423,6 +423,7 @@ DOMAIN_TOOL_MAP: Dict[str, List[str]] = {
     "customer_service":    ["escalate_to_human", "ticket_creator", "order_lookup", "gmail", "outlook_email", "database_query"],
     "ecommerce":           ["order_lookup", "database_query", "gmail", "outlook_email", "web_search"],
     "coding_assistant":    ["linter", "code_formatter", "test_runner", "code_executor", "file_operations", "web_search"],
+    "software_engineering": ["linter", "code_formatter", "test_runner", "code_executor", "file_operations", "web_search"],
     "data_analysis":       ["database_query", "file_operations", "web_search", "http_request"],
     "content_creation":    ["web_search", "file_operations", "sentiment_analyzer"],
     "project_management":  ["google_calendar", "teams", "gmail", "outlook_email", "http_request"],
