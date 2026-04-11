@@ -37,6 +37,210 @@ function renderMarkdown(text) {
   })
 }
 
+// ─── Model Picker ─────────────────────────────────────────────────────────────
+
+const PROVIDER_COLORS = {
+  ollama_local:         '#22c55e',
+  docker_model_runner:  '#3b82f6',
+  openai:               '#10b981',
+  anthropic:            '#f59e0b',
+  groq:                 '#ef4444',
+  mistral:              '#8b5cf6',
+  google:               '#0ea5e9',
+  together:             '#f97316',
+  cohere:               '#ec4899',
+}
+
+const TIER_COLORS = { 1: '#6b7280', 2: '#22c55e', 3: '#3b82f6', 4: '#f59e0b', 5: '#ef4444' }
+
+function ProviderDot({ providerId }) {
+  return (
+    <span
+      className="mp-provider-dot"
+      style={{ background: PROVIDER_COLORS[providerId] || '#6b7280' }}
+    />
+  )
+}
+
+/**
+ * ModelPicker — self-contained provider-aware model selector.
+ * Props:
+ *   value      {provider_id, model_id} | null
+ *   onChange   ({provider_id, model_id}) => void
+ *   suggestion {model_id, provider, ...} | null  — highlights the suggested model
+ *   localOnly  bool — only show local providers (ollama, docker model runner)
+ *   label      string
+ */
+function ModelPicker({ value, onChange, suggestion, localOnly = false, label }) {
+  const [open, setOpen] = useState(false)
+  const [providers, setProviders] = useState([])
+  const [activeProvider, setActiveProvider] = useState(value?.provider_id || 'ollama_local')
+  const [modelData, setModelData] = useState({}) // provider_id → {models, loading, error}
+  const [search, setSearch] = useState('')
+  const dropRef = useRef(null)
+
+  // Fetch providers list on mount
+  useEffect(() => {
+    fetch('/api/providers')
+      .then(r => r.json())
+      .then(d => {
+        const list = localOnly
+          ? (d.providers || []).filter(p => p.type === 'local')
+          : (d.providers || [])
+        setProviders(list)
+        const current = value?.provider_id
+        if (current && list.some(p => p.id === current)) {
+          setActiveProvider(current)
+        } else if (list.length > 0) {
+          setActiveProvider(list[0].id)
+        }
+      })
+      .catch(() => {})
+  }, [localOnly]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch models for the active provider tab
+  useEffect(() => {
+    if (!activeProvider || modelData[activeProvider]) return
+    setModelData(prev => ({ ...prev, [activeProvider]: { models: [], loading: true, error: null } }))
+    fetch(`/api/providers/${activeProvider}/models`)
+      .then(r => r.json())
+      .then(d => {
+        setModelData(prev => ({
+          ...prev,
+          [activeProvider]: { models: d.models || [], loading: false, error: d.error || null, fetchedLive: d.fetched_live },
+        }))
+      })
+      .catch(e => {
+        setModelData(prev => ({
+          ...prev,
+          [activeProvider]: { models: [], loading: false, error: e.message },
+        }))
+      })
+  }, [activeProvider]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    function handler(e) {
+      if (dropRef.current && !dropRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const provData = modelData[activeProvider] || { models: [], loading: false }
+  const filtered = (provData.models || []).filter(
+    m => !search || m.id.toLowerCase().includes(search.toLowerCase())
+  )
+  const activeProv = providers.find(p => p.id === activeProvider)
+
+  function selectModel(m) {
+    onChange({ provider_id: activeProvider, model_id: m.id })
+    setOpen(false)
+    setSearch('')
+  }
+
+  function isSuggested(m) {
+    if (!suggestion) return false
+    const sugId = suggestion.model_id || ''
+    return m.id === sugId || m.id === sugId.split(':')[0]
+  }
+
+  return (
+    <div className="model-picker" ref={dropRef}>
+      {label && <div className="mp-label">{label}</div>}
+      <button
+        className="mp-trigger"
+        onClick={() => setOpen(v => !v)}
+        type="button"
+      >
+        <span className="mp-value">
+          {value?.model_id ? (
+            <>
+              <ProviderDot providerId={value.provider_id} />
+              <span className="mp-model-text">{value.model_id}</span>
+            </>
+          ) : (
+            <span className="mp-placeholder">Select a model…</span>
+          )}
+        </span>
+        <span className="mp-chevron">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div className="mp-dropdown">
+          {/* Provider tabs */}
+          <div className="mp-providers">
+            {providers.map(p => (
+              <button
+                key={p.id}
+                className={`mp-provider-btn ${activeProvider === p.id ? 'active' : ''}`}
+                onClick={() => { setActiveProvider(p.id); setSearch('') }}
+                type="button"
+              >
+                <span className={`mp-status ${p.configured ? 'ok' : 'off'}`} />
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {activeProv && !activeProv.configured && (
+            <div className="mp-unconfigured">
+              {activeProv.type === 'local'
+                ? `${activeProv.label} is not running. Start it to see live models.`
+                : `Set ${activeProv.key_env_var} to enable ${activeProv.label}. Showing catalogue below.`}
+            </div>
+          )}
+
+          {/* Search */}
+          <input
+            className="mp-search"
+            placeholder="Filter models…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            autoFocus
+          />
+
+          {/* Model list */}
+          <div className="mp-list">
+            {provData.loading && <div className="mp-loading">Loading…</div>}
+            {!provData.loading && filtered.length === 0 && (
+              <div className="mp-empty">No models found</div>
+            )}
+            {filtered.map(m => {
+              const suggested = isSuggested(m)
+              const selected = value?.model_id === m.id && value?.provider_id === activeProvider
+              return (
+                <div
+                  key={m.id}
+                  className={`mp-model-item${selected ? ' selected' : ''}${suggested ? ' suggested' : ''}`}
+                  onClick={() => selectModel(m)}
+                >
+                  <div className="mp-model-row">
+                    <span className="mp-model-id">{m.id}</span>
+                    <span className="mp-model-chips">
+                      {m.tier != null && (
+                        <span className="tier-chip-s" style={{ background: TIER_COLORS[m.tier] }}>
+                          T{m.tier}
+                        </span>
+                      )}
+                      {suggested && <span className="suggested-chip">⭐</span>}
+                      {m.source === 'catalog' && <span className="catalog-chip-s">catalogue</span>}
+                    </span>
+                  </div>
+                  {m.description && (
+                    <div className="mp-model-desc">{m.description}</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Builder screen ───────────────────────────────────────────────────────────
 
 function BuilderView({ onAgentReady }) {
@@ -46,30 +250,23 @@ function BuilderView({ onAgentReady }) {
     'remember conversation history, and escalate to human agents when needed.\n' +
     'The agent must be reliable and secure since it deals with customer data.'
   )
-  const [models, setModels] = useState([])
-  const [selectedModel, setSelectedModel] = useState('')
+  const [builderModel, setBuilderModel] = useState({ provider_id: 'ollama_local', model_id: '' })
+  const [agentModel, setAgentModel] = useState(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [builderInfo, setBuilderInfo] = useState(null)
 
   useEffect(() => {
-    // Fetch available models for the builder dropdown
-    fetch('/api/models')
-      .then(r => r.json())
-      .then(data => {
-        const chat = (data.models || []).filter(
-          m => !m.includes('embed') && !m.includes('bert')
-        )
-        setModels(chat)
-        setSelectedModel(data.default || chat[0] || '')
-      })
-      .catch(() => setError('Could not reach API. Make sure the backend is running.'))
-
-    // Fetch builder identity (who is the meta-agent?)
+    // Fetch builder identity (who is the meta-agent?) and seed the builder model
     fetch('/api/models/discover')
       .then(r => r.json())
-      .then(data => setBuilderInfo(data.builder))
+      .then(data => {
+        setBuilderInfo(data.builder)
+        if (data.builder?.model_id) {
+          setBuilderModel({ provider_id: 'ollama_local', model_id: data.builder.model_id })
+        }
+      })
       .catch(() => {})
   }, [])
 
@@ -85,11 +282,17 @@ function BuilderView({ onAgentReady }) {
       const resp = await fetch('/api/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_description: jd, model: selectedModel, scaffold: true }),
+        body: JSON.stringify({ job_description: jd, model: builderModel.model_id || 'gemma3:latest', scaffold: true }),
       })
       if (!resp.ok) throw new Error(await resp.text())
       const data = await resp.json()
       setResult(data)
+      if (data.recommended_model) {
+        setAgentModel({
+          provider_id: data.recommended_model.provider || 'ollama_local',
+          model_id: data.recommended_model.model_id,
+        })
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -132,20 +335,12 @@ function BuilderView({ onAgentReady }) {
           rows={12}
         />
 
-        {models.length > 0 && (
-          <div className="model-select-wrapper">
-            <label>LLM Model</label>
-            <select
-              className="model-select"
-              value={selectedModel}
-              onChange={e => setSelectedModel(e.target.value)}
-            >
-              {models.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        <ModelPicker
+          label="Builder Analysis Model"
+          value={builderModel}
+          onChange={setBuilderModel}
+          localOnly={true}
+        />
 
         {error && <div className="error-box">{error}</div>}
 
@@ -160,7 +355,7 @@ function BuilderView({ onAgentReady }) {
         {result && (
           <button
             className="btn btn-accent btn-full"
-            onClick={() => onAgentReady(result, selectedModel)}
+            onClick={() => onAgentReady(result, agentModel || builderModel)}
           >
             💬 Launch Agent Chat →
           </button>
@@ -215,8 +410,14 @@ function BuilderView({ onAgentReady }) {
                       </span>
                     ))}
                   </div>
-                )}
-              </div>
+                )}                <div className="agent-model-picker-wrapper">
+                  <p className="agent-model-picker-label">Override agent runtime model:</p>
+                  <ModelPicker
+                    value={agentModel}
+                    onChange={setAgentModel}
+                    suggestion={result.recommended_model}
+                  />
+                </div>              </div>
             )}
 
             {/* Hero card */}
@@ -617,9 +818,12 @@ export default function App() {
   const [agentData, setAgentData] = useState(null)
   const [model, setModel] = useState('')
 
-  function handleAgentReady(data, selectedModel) {
+  function handleAgentReady(data, modelChoice) {
     setAgentData(data)
-    setModel(selectedModel || 'gemma3:latest')
+    const modelId = typeof modelChoice === 'string'
+      ? modelChoice
+      : (modelChoice?.model_id || 'gemma3:latest')
+    setModel(modelId)
     setView('chat')
   }
 

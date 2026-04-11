@@ -524,3 +524,293 @@ def recommend_model(
         result["warning"] = warning
 
     return result
+
+
+# ─── Provider definitions ─────────────────────────────────────────────────────
+
+PROVIDER_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "ollama_local": {
+        "id":               "ollama_local",
+        "label":            "Local Ollama",
+        "type":             "local",
+        "description":      "Locally running Ollama — free, private, no API costs",
+        "key_env_var":      None,
+        "models_fetchable": True,
+    },
+    "docker_model_runner": {
+        "id":               "docker_model_runner",
+        "label":            "Docker Model Runner",
+        "type":             "local",
+        "description":      "Docker-native model runner (dmr/ prefix models)",
+        "key_env_var":      None,
+        "models_fetchable": True,
+    },
+    "openai": {
+        "id":               "openai",
+        "label":            "OpenAI",
+        "type":             "cloud",
+        "description":      "GPT-4o, GPT-4o-mini, o1, o3-mini",
+        "key_env_var":      "OPENAI_API_KEY",
+        "models_fetchable": True,
+    },
+    "anthropic": {
+        "id":               "anthropic",
+        "label":            "Anthropic",
+        "type":             "cloud",
+        "description":      "Claude 3.5 Sonnet, Haiku — strong reasoning & long context",
+        "key_env_var":      "ANTHROPIC_API_KEY",
+        "models_fetchable": False,
+    },
+    "groq": {
+        "id":               "groq",
+        "label":            "Groq",
+        "type":             "cloud",
+        "description":      "Ultra-fast LPU inference — LLaMA, Mixtral, Gemma models",
+        "key_env_var":      "GROQ_API_KEY",
+        "models_fetchable": True,
+    },
+    "mistral": {
+        "id":               "mistral",
+        "label":            "Mistral AI",
+        "type":             "cloud",
+        "description":      "Mistral Small, Large — GDPR-compliant European models",
+        "key_env_var":      "MISTRAL_API_KEY",
+        "models_fetchable": True,
+    },
+    "google": {
+        "id":               "google",
+        "label":            "Google AI",
+        "type":             "cloud",
+        "description":      "Gemini 1.5 Flash & Pro — 1M token context, multimodal",
+        "key_env_var":      "GOOGLE_API_KEY",
+        "models_fetchable": True,
+    },
+    "together": {
+        "id":               "together",
+        "label":            "Together AI",
+        "type":             "cloud",
+        "description":      "Open-source LLaMA, Mixtral via Together's API",
+        "key_env_var":      "TOGETHER_API_KEY",
+        "models_fetchable": True,
+    },
+    "cohere": {
+        "id":               "cohere",
+        "label":            "Cohere",
+        "type":             "cloud",
+        "description":      "Command-R and R+ — built for RAG and agentic tasks",
+        "key_env_var":      "COHERE_API_KEY",
+        "models_fetchable": False,
+    },
+}
+
+
+async def get_providers_status(
+    ollama_url: str = "http://localhost:11434",
+    dmr_url: str = "http://host-gateway:12434",
+) -> List[Dict[str, Any]]:
+    """Return all provider definitions enriched with live configured/reachable status."""
+    ollama_ok = False
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.get(f"{ollama_url}/api/tags")
+            ollama_ok = r.status_code == 200
+    except Exception:
+        pass
+
+    dmr_ok = False
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{dmr_url}/v1/models")
+            dmr_ok = r.status_code == 200
+    except Exception:
+        pass
+
+    result = []
+    for pid, defn in PROVIDER_DEFINITIONS.items():
+        if pid == "ollama_local":
+            configured = ollama_ok
+        elif pid == "docker_model_runner":
+            configured = dmr_ok
+        else:
+            configured = bool(os.getenv(defn["key_env_var"])) if defn["key_env_var"] else False
+        result.append({**defn, "configured": configured})
+    return result
+
+
+async def fetch_provider_models(
+    provider_id: str,
+    ollama_url: str = "http://localhost:11434",
+    dmr_url: str = "http://host-gateway:12434",
+) -> Dict[str, Any]:
+    """
+    Fetch the live model list from a specific provider.
+
+    - Local providers (ollama_local, docker_model_runner): calls their API directly.
+    - Cloud providers with a /models endpoint (openai, groq, mistral, google, together):
+      fetches live when the API key ENV var is set.
+    - Providers without a list endpoint (anthropic, cohere) or unconfigured keys:
+      falls back to the curated _EXTERNAL_CATALOGUE entries for that provider.
+    """
+    defn = PROVIDER_DEFINITIONS.get(provider_id)
+    if not defn:
+        raise ValueError(f"Unknown provider: {provider_id}")
+
+    api_key: Optional[str] = os.getenv(defn["key_env_var"]) if defn["key_env_var"] else None
+    models: List[Dict[str, Any]] = []
+    fetch_error: Optional[str] = None
+    fetched_live = False
+
+    try:
+        if provider_id == "ollama_local":
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(f"{ollama_url}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+            for m in data.get("models", []):
+                name = m["name"]
+                if _EMBEDDING_RE.search(name):
+                    continue
+                size_b = _extract_size_b(name)
+                models.append({
+                    "id": name, "name": name,
+                    "tier": _size_to_tier(size_b), "size_b": round(size_b, 1),
+                    "description": f"~{size_b:.0f}B — local, free, private",
+                    "source": "installed", "is_local": True,
+                })
+            fetched_live = True
+
+        elif provider_id == "docker_model_runner":
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(f"{dmr_url}/v1/models")
+                resp.raise_for_status()
+                data = resp.json()
+            for m in data.get("data", []):
+                raw_id = m.get("id") or m.get("name", "")
+                model_id = raw_id if raw_id.startswith("dmr/") else f"dmr/{raw_id}"
+                models.append({
+                    "id": model_id, "name": model_id, "tier": 2,
+                    "description": "Docker Model Runner model",
+                    "source": "installed", "is_local": True,
+                })
+            fetched_live = True
+
+        elif provider_id == "openai" and api_key:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            chat_pfx = ("gpt-3.5", "gpt-4", "o1", "o3", "chatgpt")
+            for m in data.get("data", []):
+                mid = m["id"]
+                if any(mid.startswith(p) for p in chat_pfx):
+                    tier = 4 if any(k in mid for k in ("gpt-4", "o1", "o3")) else 2
+                    models.append({
+                        "id": mid, "name": mid, "tier": tier,
+                        "description": "OpenAI chat model",
+                        "source": "api", "is_local": False,
+                    })
+            models.sort(key=lambda x: x["id"])
+            fetched_live = True
+
+        elif provider_id == "groq" and api_key:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.groq.com/openai/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            for m in data.get("data", []):
+                mid = m["id"]
+                tier = 4 if any(k in mid for k in ("70b", "8x7b", "405b")) else 2
+                models.append({
+                    "id": mid, "name": mid, "tier": tier,
+                    "description": "Groq LPU inference model",
+                    "source": "api", "is_local": False,
+                })
+            models.sort(key=lambda x: x["id"])
+            fetched_live = True
+
+        elif provider_id == "mistral" and api_key:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.mistral.ai/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            for m in data.get("data", []):
+                mid = m["id"]
+                if "embed" not in mid:
+                    tier = 4 if any(k in mid for k in ("large", "medium")) else 2
+                    models.append({
+                        "id": mid, "name": mid, "tier": tier,
+                        "description": m.get("description", "Mistral AI model"),
+                        "source": "api", "is_local": False,
+                    })
+            models.sort(key=lambda x: x["id"])
+            fetched_live = True
+
+        elif provider_id == "google" and api_key:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            for m in data.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                if "gemini" in name and "embed" not in name and "aqa" not in name:
+                    tier = 4 if "pro" in name else 2
+                    models.append({
+                        "id": name, "name": name, "tier": tier,
+                        "description": m.get("displayName", "Google AI model"),
+                        "source": "api", "is_local": False,
+                    })
+            models.sort(key=lambda x: x["id"])
+            fetched_live = True
+
+        elif provider_id == "together" and api_key:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.together.xyz/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+            for m in items:
+                mid = m.get("id") or m.get("name", "")
+                if mid and m.get("type", "chat") in ("chat", "language", ""):
+                    models.append({
+                        "id": mid, "name": m.get("display_name", mid), "tier": 3,
+                        "description": m.get("description", "Together AI model"),
+                        "source": "api", "is_local": False,
+                    })
+            models.sort(key=lambda x: x["id"])
+            fetched_live = True
+
+    except Exception as exc:
+        fetch_error = str(exc)
+
+    # Fall back to curated catalogue when live fetch failed or was skipped
+    if not models:
+        for entry in _EXTERNAL_CATALOGUE:
+            if entry.provider_id == provider_id:
+                models.append({
+                    "id": entry.model_id, "name": entry.model_id,
+                    "tier": (entry.min_tier + entry.max_tier) // 2,
+                    "description": entry.reason,
+                    "source": "catalog", "is_local": False,
+                })
+
+    return {
+        "provider_id": provider_id,
+        "provider_label": defn["label"],
+        "models": models,
+        "fetched_live": fetched_live,
+        "error": fetch_error,
+    }

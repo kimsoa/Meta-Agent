@@ -29,7 +29,13 @@ from main import MetaAgentBuilder
 from tool_registry import get_ecosystem_groups
 from agent_scaffold import scaffold_agent, list_scaffolded_agents
 from docker_agent_scaffold import create_single_docker_agent, create_multi_docker_agent
-from model_selector import discover_models, recommend_model
+from model_selector import (
+    discover_models,
+    recommend_model,
+    get_providers_status,
+    fetch_provider_models,
+    PROVIDER_DEFINITIONS,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -207,6 +213,38 @@ async def get_models_discover():
     """
     catalog = await discover_models(ollama_url=OLLAMA_URL, builder_model=DEFAULT_MODEL)
     return catalog
+
+
+@app.get("/api/providers", tags=["Reference"])
+async def list_providers():
+    """
+    Returns all supported model providers, each with a `configured` flag
+    indicating whether the provider is reachable or has an API key set.
+    """
+    providers = await get_providers_status(
+        ollama_url=OLLAMA_URL,
+        dmr_url=os.getenv("DMR_URL", "http://host-gateway:12434"),
+    )
+    return {"providers": providers}
+
+
+@app.get("/api/providers/{provider_id}/models", tags=["Reference"])
+async def get_provider_models(provider_id: str):
+    """
+    Fetch the model list for a specific provider.
+    - Local providers: live query their API.
+    - Cloud providers with a key in ENV: live query.
+    - Others: return the curated catalogue entries.
+    """
+    if provider_id not in PROVIDER_DEFINITIONS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id!r}")
+    result = await fetch_provider_models(
+        provider_id=provider_id,
+        ollama_url=OLLAMA_URL,
+        dmr_url=os.getenv("DMR_URL", "http://host-gateway:12434"),
+    )
+    return result
 
 
 @app.post("/api/build", response_model=BuildResponse, tags=["Pipeline"])
